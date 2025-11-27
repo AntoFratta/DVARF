@@ -1,3 +1,20 @@
+# Core dependencies used by the project.
 numpy
 pillow
 matplotlib
+opencv-python
+
+# Dependencies required by SAM 3 (in addition to PyTorch, which is installed separately).
+einops
+timm
+huggingface_hub
+decord 
+pycocotools
+psutil
+
+# Triton implementation for Windows environments.
+# On Linux machines, follow the official SAM 3 installation instructions
+# and install the appropriate 'triton' package instead.
+triton-windows
+
+

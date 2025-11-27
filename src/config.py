@@ -30,3 +30,27 @@ def get_labels_dir(split: str):
     """Ritorna la cartella labels per lo split dato."""
     split = _check_split(split)
     return LABELS_ROOT / split
+
+# Directory for model predictions (not tracked by git, under data/processed).
+PREDICTIONS_DIR = DATA_DIR / "processed" / "predictions"
+
+
+def get_sam3_yolo_predictions_dir(split: str) -> Path:
+    """
+    Return the directory where YOLO-style predictions produced by SAM 3
+    will be stored for a given split (train, val, test).
+    """
+    split = _check_split(split)
+    return PREDICTIONS_DIR / "sam3_yolo" / split
+
+# Directory for segmentation outputs.
+SEGMENTATIONS_DIR = DATA_DIR / "processed" / "segmentations"
+
+
+def get_sam3_segmentation_dir(split: str) -> Path:
+    """
+    Return the directory where SAM 3 segmentation masks will be stored
+    for a given split (train, val, test).
+    """
+    split = _check_split(split)
+    return SEGMENTATIONS_DIR / "sam3" / split
