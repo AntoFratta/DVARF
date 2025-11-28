@@ -34,6 +34,8 @@ def run_sam3_on_split(
     max_images: Optional[int] = None,
     save_segmentations: bool = True,
     max_masks_per_image_per_class: Optional[int] = None,
+    nms_iou: float = 0.7,
+    nms_max_det: int = 300,
 ) -> None:
     """
     Run SAM 3 on all images of a given split and save YOLO-style predictions
@@ -43,6 +45,7 @@ def run_sam3_on_split(
     - SAM 3 is queried once per class using the corresponding text prompt.
     - Predictions are converted to YOLO format (cx, cy, w, h in [0, 1]) and
       written to a text file: class cx cy w h score.
+    - Class-wise NMS is applied before writing to reduce duplicates.
     - If save_segmentations is True, binary masks are exported as PNG images.
     """
     images_dir = get_images_dir(split)
@@ -69,11 +72,11 @@ def run_sam3_on_split(
     print(f"Images directory: {images_dir}")
     print(f"Prediction directory: {pred_dir}")
     print(f"Score threshold (export): {score_threshold}")
+    print(f"NMS: iou={nms_iou}, max_det={nms_max_det}")
     if save_segmentations:
         print(f"Segmentation directory: {segm_dir}")
 
     model = Sam3ImageModel()
-
     t_start = time()
 
     for idx, img_path in enumerate(image_files, start=1):
@@ -107,11 +110,10 @@ def run_sam3_on_split(
                     max_masks=max_masks_per_image_per_class,
                 )
 
-        # Dopo aver accumulato tutte le box di tutte le classi (per questa immagine)
+        # Apply NMS once per image (after accumulating boxes from all classes)
         before = len(all_boxes)
-        all_boxes = nms_yolo_boxes(all_boxes, iou_threshold=0.7, max_det=300)
+        all_boxes = nms_yolo_boxes(all_boxes, iou_threshold=nms_iou, max_det=nms_max_det)
         after = len(all_boxes)
-
 
         # YOLO-style predictions with score as 6th column
         lines = yolo_boxes_to_lines(
@@ -128,24 +130,23 @@ def run_sam3_on_split(
         elapsed = time() - t_start
         print(
             f"[{idx}/{len(image_files)}] {img_path.name} -> {out_path.name} "
-            f"({len(all_boxes)} boxes, elapsed {elapsed:.1f}s)"
-        )
-    
-    total_time = time() - t_start
-    print(f"Done. Processed {len(image_files)} images in {total_time:.1f}s.")
-
-    print(
-            f"[{idx}/{len(image_files)}] {img_path.name} -> {out_path.name} "
             f"({before}->{after} boxes after NMS, elapsed {elapsed:.1f}s)"
         )
+
+    total_time = time() - t_start
+    print(f"Done. Processed {len(image_files)} images in {total_time:.1f}s.")
 
 
 def main() -> None:
     split = "test"
     score_threshold = 0.26
-    max_images: Optional[int] = None  # None = tutte le immagini
-    save_segmentations = True         # o False se non ti servono su test
+    max_images: Optional[int] = None  # None = all images
+    save_segmentations = True         # False if you don't need masks on test
     max_masks_per_image_per_class: Optional[int] = None
+
+    # NMS params (start YOLO-ish)
+    nms_iou = 0.7
+    nms_max_det = 300
 
     run_sam3_on_split(
         split=split,
@@ -153,6 +154,8 @@ def main() -> None:
         max_images=max_images,
         save_segmentations=save_segmentations,
         max_masks_per_image_per_class=max_masks_per_image_per_class,
+        nms_iou=nms_iou,
+        nms_max_det=nms_max_det,
     )
 
 
