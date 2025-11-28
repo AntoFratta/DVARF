@@ -23,6 +23,7 @@ from src.yolo_export import (  # noqa: E402
     sam3_boxes_to_yolo,
     yolo_boxes_to_lines,
     YoloBox,
+    nms_yolo_boxes,
 )
 from src.segmentation_export import save_sam3_masks_for_image  # noqa: E402
 
@@ -106,6 +107,12 @@ def run_sam3_on_split(
                     max_masks=max_masks_per_image_per_class,
                 )
 
+        # Dopo aver accumulato tutte le box di tutte le classi (per questa immagine)
+        before = len(all_boxes)
+        all_boxes = nms_yolo_boxes(all_boxes, iou_threshold=0.7, max_det=300)
+        after = len(all_boxes)
+
+
         # YOLO-style predictions with score as 6th column
         lines = yolo_boxes_to_lines(
             all_boxes,
@@ -123,9 +130,14 @@ def run_sam3_on_split(
             f"[{idx}/{len(image_files)}] {img_path.name} -> {out_path.name} "
             f"({len(all_boxes)} boxes, elapsed {elapsed:.1f}s)"
         )
-
+    
     total_time = time() - t_start
     print(f"Done. Processed {len(image_files)} images in {total_time:.1f}s.")
+
+    print(
+            f"[{idx}/{len(image_files)}] {img_path.name} -> {out_path.name} "
+            f"({before}->{after} boxes after NMS, elapsed {elapsed:.1f}s)"
+        )
 
 
 def main() -> None:
