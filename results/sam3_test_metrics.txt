@@ -1,0 +1,32 @@
+Evaluating split 'test'
+Labels directory:     /content/DVARF/data/raw/labels/test
+Predictions directory:/content/DVARF/data/processed/predictions/sam3_yolo/test
+Confidence threshold: 0.26
+
+Loaded 472 ground-truth boxes and 333 predictions.
+
+Per-class metrics (IoU >= 0.5, fixed score threshold):
+
+  Class 0 (crashed car on the road):
+    GT=184, Pred=253, TP=124, FP=129
+    P = 0.4901, R = 0.6739, F1 = 0.5675
+    AP@0.50     = 0.5122
+    AP@0.50:0.95 = 0.2351
+
+  Class 1 (person at the accident scene):
+    GT=32, Pred=30, TP=21, FP=9
+    P = 0.7000, R = 0.6562, F1 = 0.6774
+    AP@0.50     = 0.6033
+    AP@0.50:0.95 = 0.1949
+
+  Class 2 (undamaged car or parked car):
+    GT=256, Pred=50, TP=19, FP=31
+    P = 0.3800, R = 0.0742, F1 = 0.1242
+    AP@0.50     = 0.0606
+    AP@0.50:0.95 = 0.0418
+
+Global metrics:
+
+  P = 0.4925, R = 0.3475, F1 = 0.4075
+  mAP@0.50     = 0.3920
+  mAP@0.50:0.95 = 0.1573
