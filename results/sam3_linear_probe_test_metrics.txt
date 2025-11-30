@@ -1,0 +1,32 @@
+Evaluating split 'test' (SAM 3 + linear probe)
+Labels directory:     /content/DVARF/data/raw/labels/test
+Predictions directory:/content/DVARF/data/processed/predictions/sam3_linear_probe_yolo/test
+Confidence threshold: 0.26
+
+Loaded 472 ground-truth boxes and 324 predictions.
+
+Per-class metrics (IoU >= 0.5, fixed score threshold):
+
+  Class 0 (crashed car on the road):
+    GT=184, Pred=253, TP=124, FP=129
+    P = 0.4901, R = 0.6739, F1 = 0.5675
+    AP@0.50     = 0.5201
+    AP@0.50:0.95 = 0.2483
+
+  Class 1 (person at the accident scene):
+    GT=32, Pred=30, TP=21, FP=9
+    P = 0.7000, R = 0.6562, F1 = 0.6774
+    AP@0.50     = 0.5973
+    AP@0.50:0.95 = 0.1661
+
+  Class 2 (undamaged car or parked car):
+    GT=256, Pred=41, TP=18, FP=23
+    P = 0.4390, R = 0.0703, F1 = 0.1212
+    AP@0.50     = 0.0649
+    AP@0.50:0.95 = 0.0338
+
+Global metrics:
+
+  P = 0.5031, R = 0.3453, F1 = 0.4095
+  mAP@0.50     = 0.3941
+  mAP@0.50:0.95 = 0.1494
