@@ -47,6 +47,18 @@ See `requirements.txt` for detailed installation instructions and platform-speci
 
 ---
 
+## Google Colab
+
+For quick experimentation without local setup, two ready-to-use Jupyter notebooks are provided in the `notebooks/` directory. These notebooks run entirely on Google Colab's free GPU instances and handle all installation and data preparation steps automatically.
+
+**Zero-Shot Inference Notebook** ([`test_sam3.ipynb`](notebooks/test_sam3.ipynb)): Demonstrates SAM 3's zero-shot object detection capabilities on the test set. This notebook provides a streamlined workflow for running inference and evaluating results without any training or fine-tuning.
+
+**Linear Probing Notebook** ([`test_sam3_linearProbing.ipynb`](notebooks/test_sam3_linearProbing.ipynb)): Contains the complete experimental pipeline including training SAM 3 on the training split, building the linear probe dataset, training the classifier, and evaluating the enhanced predictions on the test set.
+
+To use these notebooks, upload them to Google Colab, ensure GPU runtime is enabled (Runtime → Change runtime type → T4 GPU), and execute cells sequentially. The notebooks will automatically clone this repository, install dependencies, and guide you through the authentication process for Hugging Face model access.
+
+---
+
 ## Dataset Format
 
 The project uses the YOLO annotation format, which organizes data into separate directories for images and labels, with each split (train, validation, test) stored independently.
@@ -140,6 +152,7 @@ DVARF/
 ├── data/                    # Dataset (images + labels)
 ├── scripts/                 # Executable scripts
 ├── src/                     # Library code
+├── notebooks/               # Jupyter notebooks for Google Colab
 ├── results/                 # Evaluation metrics
 ├── requirements.txt         # Dependencies
 └── README.md
