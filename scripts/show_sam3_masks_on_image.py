@@ -42,8 +42,8 @@ def load_masks_for_image(split: str, image_id: str) -> Dict[int, List[np.ndarray
 
 
 def main() -> None:
-    split = "val"
-    image_id = "3"  # change this to another id if needed
+    split = "test"
+    image_id = "118"  # change this to another id if needed
 
     images_dir = get_images_dir(split)
     img_path = images_dir / f"{image_id}.jpg"

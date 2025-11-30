@@ -1,20 +1,79 @@
-# Core dependencies used by the project.
-numpy
-pillow
-matplotlib
-opencv-python
+# ============================================================================
+# INSTALLATION INSTRUCTIONS
+# ============================================================================
+# 
+# BEFORE installing this requirements.txt, you MUST install:
+#
+# 1. PyTorch (REQUIRED):
+#    - Colab: Usually pre-installed, verify with: import torch
+#    - Local: pip install torch torchvision torchaudio
+#    - GPU users: See https://pytorch.org/get-started/locally/ for CUDA versions
+#
+# 2. SAM 3 (REQUIRED):
+#    - Install from Meta's repository:
+#      pip install git+https://github.com/facebookresearch/segment-anything-3.git
+#    - OR follow the official SAM 3 installation guide
+#
+# After installing PyTorch and SAM 3, run:
+#    pip install -r requirements.txt
+#
+# ============================================================================
 
-# Dependencies required by SAM 3 (in addition to PyTorch, which is installed separately).
-einops
-timm
-huggingface_hub
-decord 
-pycocotools
-psutil
+# ============================================================================
+# Core Project Dependencies
+# ============================================================================
 
-# Triton implementation for Windows environments.
-# On Linux machines, follow the official SAM 3 installation instructions
-# and install the appropriate 'triton' package instead.
+# PyTorch - Deep learning framework (required by SAM 3)
+# WARNING: Install separately BEFORE running pip install -r requirements.txt
+# Uncomment the line below ONLY if you want CPU-only version auto-installed:
+# torch>=2.0.0
+# torchvision>=0.15.0
+# torchaudio>=2.0.0
+
+# Numerical computing and data handling
+numpy>=1.21.0
+
+# Image processing
+pillow>=9.0.0
+
+# Visualization
+matplotlib>=3.5.0
+
+# Computer vision utilities (currently unused in code, can be removed)
+opencv-python>=4.6.0
+
+# ============================================================================
+# SAM 3 Dependencies
+# ============================================================================
+# NOTE: SAM 3 itself must be installed separately (see instructions above)
+
+# Tensor operations for transformers
+einops>=0.6.0
+
+# PyTorch Image Models
+timm>=0.9.0
+
+# Model downloading from Hugging Face
+huggingface_hub>=0.16.0
+
+# Video I/O (required by SAM 3 video capabilities)
+decord>=0.6.0
+
+# COCO dataset tools (for evaluation metrics)
+pycocotools>=2.0.6
+
+# System and process utilities
+psutil>=5.9.0
+
+# ============================================================================
+# Triton - GPU Kernel Library
+# ============================================================================
+# Triton is used by SAM 3 for optimized operations
+# 
+# Windows users: Use triton-windows (unofficial port)
 triton-windows
+# 
+# Linux users: Comment out triton-windows above and uncomment this:
+# triton>=2.0.0
 
 
