@@ -3,7 +3,6 @@
 Experimental evaluation of Meta's Segment Anything Model 3 (SAM 3) for zero-shot object detection in aerial accident scene imagery.
 
 ![SAM 3 Example](assets/sam3_example.png)
-*Example of SAM 3 zero-shot segmentation on an accident scene. Red masks indicate crashed vehicles, blue masks indicate persons detected using text prompts.*
 
 ---
 
