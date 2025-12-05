@@ -121,6 +121,51 @@ python scripts/show_gt_vs_sam3.py
 
 ---
 
+## Metrics Methodology
+
+### Class-Specific Average IoU
+
+The **IoU medio** (mean IoU) metric measures the average Intersection over Union for correctly matched predictions:
+
+1. **Matching Algorithm**: For each ground truth box, we find the predicted box with the highest IoU. A prediction is considered a **True Positive (TP)** if:
+   - The predicted class matches the ground truth class
+   - The IoU is ≥ 0.5
+   - The ground truth has not already been matched to another prediction
+
+2. **Per-Class IoU**: For each of the three classes (crashed car, person, undamaged car), we calculate the mean IoU over all True Positives for that class. If a class has zero True Positives, its IoU medio is 0.0.
+
+3. **Overall Mean IoU** (`IoU_medio_totale`): The arithmetic mean of the three per-class IoU values. This provides a single metric that reflects both localization quality and class-specific performance.
+
+This metric is calculated on the **test set** and complements the standard AP@0.50 metric by directly measuring localization quality for correct detections.
+
+### Inference Speed
+
+The **speed per frame** metric measures the average time required to process a single image:
+
+**Components Included**:
+- Image loading from disk (I/O)
+- SAM 3 model inference (forward pass for each class prompt)
+- Post-processing (YOLO format conversion, NMS)
+- Linear probe application (for the linear probing variant only)
+
+**Measurement Procedure**:
+1. Load all test set image paths
+2. Synchronize GPU (if available)
+3. Start timer
+4. Process each image through the complete pipeline
+5. Synchronize GPU (if available)
+6. End timer and divide by number of images
+
+**Note**: The timing includes I/O because SAM 3's `predict_with_text()` method loads images internally from file paths. The reported speed represents the complete end-to-end pipeline as it would be deployed in practice.
+
+Speed is measured separately for:
+- **SAM 3 zero-shot**: Model inference + post-processing
+- **SAM 3 + linear probe**: Model inference + linear classifier + post-processing
+
+Both metrics are measured on the **test set** and saved to the metrics files alongside precision, recall, F1, and AP scores.
+
+---
+
 ## Experimental Results
 
 Results on test split (confidence threshold = 0.26):
