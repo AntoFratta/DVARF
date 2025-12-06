@@ -132,7 +132,7 @@ The **mean IoU** metric measures the average Intersection over Union for correct
    - The IoU is ≥ 0.5
    - The ground truth has not already been matched to another prediction
 
-2. **Per-Class IoU**: For each of the three classes (crashed car, person, undamaged car), we calculate the mean IoU over all True Positives for that class. If a class has zero True Positives, its IoU medio is 0.0.
+2. **Per-Class IoU**: For each of the three classes (crashed car, person, undamaged car), we calculate the mean IoU over all True Positives for that class. If a class has zero True Positives, its its mean IoU is 0.0.
 
 3. **Overall Mean IoU**: The arithmetic mean of the three per-class IoU values. This provides a single metric that reflects both localization quality and class-specific performance.
 
@@ -194,7 +194,7 @@ Results on test split (confidence threshold = 0.26):
 
 Comprehensive comparison of SAM 3 with other zero-shot and supervised models on the test set. Metrics include class-specific mean IoU for zero-shot models and AP@0.5 scores for detection models:
 
-| Model | Type/Phase | IoU medio crashed car | IoU medio person | IoU medio car | mIoU | Speed (ms/frame) | AP@0.5 crashed | AP@0.5 person | AP@0.5 car | mAP@0.5 |
+| Model | Type/Phase | Mean IoU crashed car | Mean IoU person | Mean IoU car | mIoU | Speed (ms/frame) | AP@0.5 crashed | AP@0.5 person | AP@0.5 car | mAP@0.5 |
 |-------|------------|----------------------|------------------|---------------|------|------------------|----------------|---------------|------------|---------|
 | **Moondream 2** | ZSOD | 0.42 | 0.47 | 0.43 | 0.44 | ~1000 | N/A | N/A | N/A | N/A |
 | **OMDET TURBO** | ZSOD | 0.65 | 0.77 | 0.74 | 0.72 | ~2000 | N/A | N/A | N/A | N/A |
@@ -205,7 +205,7 @@ Comprehensive comparison of SAM 3 with other zero-shot and supervised models on 
 | **SAM 3 + LP** | Linear Probe | 0.742 | 0.671 | 0.758 | 0.724 | 5862 | 0.520 | 0.597 | 0.065 | 0.394 |
 
 **Notes**:
-- **IoU medio**: Mean Intersection over Union for True Positives (IoU ≥ 0.5) on test set. Higher is better for localization quality.
+- **Mean IoU**: Per-class (or per-prompt) mean Intersection over Union computed on correctly matched predictions (True Positives with IoU ≥ 0.5) on the test set. Higher values indicate better localization quality.
 - **mIoU**: Arithmetic mean of the three class-specific IoU values. For zero-shot prompt-based models (Moondream 2, OMDET TURBO, YOLOe ZSOD), IoU values are reported per text prompt as in the original thesis. For SAM 3, IoU values are computed per detection class on the YOLO-style dataset.
 - **Speed**: Average inference time per image including I/O, model forward pass, and post-processing. Measured on test set (100 images for SAM 3). For Moondream 2, OMDET TURBO and YOLOe (ZSOD/base/specialized), speed values are approximate and derived from the thesis (≈1s, ≈2s, ≈20ms per frame).
 - **AP@0.5**: Average Precision at IoU threshold 0.5. Standard object detection metric.
