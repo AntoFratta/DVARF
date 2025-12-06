@@ -192,7 +192,7 @@ Results on test split (confidence threshold = 0.26):
 
 ## Model Comparison
 
-Comprehensive comparison of SAM 3 with other zero-shot and supervised models on the DVARF test set. Metrics include class-specific mean IoU for zero-shot models and AP@0.5 scores for detection models:
+Comprehensive comparison of SAM 3 with other zero-shot and supervised models on the test set. Metrics include class-specific mean IoU for zero-shot models and AP@0.5 scores for detection models:
 
 | Model | Type/Phase | IoU medio crashed car | IoU medio person | IoU medio car | mIoU | Speed (ms/frame) | AP@0.5 crashed | AP@0.5 person | AP@0.5 car | mAP@0.5 |
 |-------|------------|----------------------|------------------|---------------|------|------------------|----------------|---------------|------------|---------|
@@ -221,26 +221,9 @@ Comprehensive comparison of SAM 3 with other zero-shot and supervised models on 
 
 ---
 
-## Project Structure
-
-```
-DVARF/
-├── data/                    # Dataset (images + labels)
-├── scripts/                 # Executable scripts
-├── src/                     # Library code
-├── notebooks/               # Jupyter notebooks for Google Colab
-├── results/                 # Evaluation metrics
-├── requirements.txt         # Dependencies
-└── README.md
-```
-
-See individual script files for detailed configuration options.
-
----
-
 ## License
 
-This project is licensed under the MIT License. SAM 3 is licensed under Apache 2.0 by Meta AI.
+SAM 3 is licensed under Apache 2.0 by Meta AI.
 
 ---
 
