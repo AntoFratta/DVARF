@@ -53,7 +53,7 @@ For quick experimentation without local setup, two ready-to-use Jupyter notebook
 
 **Zero-Shot Inference Notebook** ([`test_sam3.ipynb`](notebooks/test_sam3.ipynb)): Demonstrates SAM 3's zero-shot object detection capabilities on the test set. This notebook provides a streamlined workflow for running inference and evaluating results without any training or fine-tuning.
 
-**Linear Probing Notebook** ([`test_sam3_linearProbing.ipynb`](notebooks/test_sam3_linearProbing.ipynb)): Contains the complete experimental pipeline including training SAM 3 on the training split, building the linear probe dataset, training the classifier, and evaluating the enhanced predictions on the test set.
+**Linear Probing Notebook** ([`test_sam3_linearProbing.ipynb`](notebooks/test_sam3_linearProbing.ipynb)): Contains the complete experimental pipeline including running SAM 3 on the training split to generate predictions and features, building the linear probe dataset, training the classifier, and evaluating the enhanced predictions on the test set.
 
 To use these notebooks, upload them to Google Colab, ensure GPU runtime is enabled (Runtime → Change runtime type → T4 GPU), and execute cells sequentially. The notebooks will automatically clone this repository, install dependencies, and guide you through the authentication process for Hugging Face model access.
 
@@ -125,7 +125,7 @@ python scripts/show_gt_vs_sam3.py
 
 ### Class-Specific Average IoU
 
-The **IoU medio** (mean IoU) metric measures the average Intersection over Union for correctly matched predictions:
+The **mean IoU** metric measures the average Intersection over Union for correctly matched predictions:
 
 1. **Matching Algorithm**: For each ground truth box, we find the predicted box with the highest IoU. A prediction is considered a **True Positive (TP)** if:
    - The predicted class matches the ground truth class
@@ -134,7 +134,7 @@ The **IoU medio** (mean IoU) metric measures the average Intersection over Union
 
 2. **Per-Class IoU**: For each of the three classes (crashed car, person, undamaged car), we calculate the mean IoU over all True Positives for that class. If a class has zero True Positives, its IoU medio is 0.0.
 
-3. **Overall Mean IoU** (`IoU_medio_totale`): The arithmetic mean of the three per-class IoU values. This provides a single metric that reflects both localization quality and class-specific performance.
+3. **Overall Mean IoU**: The arithmetic mean of the three per-class IoU values. This provides a single metric that reflects both localization quality and class-specific performance.
 
 This metric is calculated on the **test set** and complements the standard AP@0.50 metric by directly measuring localization quality for correct detections.
 
@@ -187,6 +187,37 @@ Results on test split (confidence threshold = 0.26):
 | Person | 0.700 | 0.656 | 0.677 | 0.597 | 0.166 |
 | Undamaged car | 0.439 | 0.070 | 0.121 | 0.065 | 0.034 |
 | **Overall** | **0.503** | **0.345** | **0.410** | **0.394** | **0.149** |
+
+---
+
+## Model Comparison
+
+Comprehensive comparison of SAM 3 with other zero-shot and supervised models on the DVARF test set. Metrics include class-specific mean IoU for zero-shot models and AP@0.5 scores for detection models:
+
+| Model | Type/Phase | IoU medio crashed car | IoU medio person | IoU medio car | mIoU | Speed (ms/frame) | AP@0.5 crashed | AP@0.5 person | AP@0.5 car | mAP@0.5 |
+|-------|------------|----------------------|------------------|---------------|------|------------------|----------------|---------------|------------|---------|
+| **Moondream 2** | ZSOD | 0.42 | 0.47 | 0.43 | 0.44 | ~1000 | N/A | N/A | N/A | N/A |
+| **OMDET TURBO** | ZSOD | 0.65 | 0.77 | 0.74 | 0.72 | ~2000 | N/A | N/A | N/A | N/A |
+| **YOLOe** | ZSOD | 0.46 | 0.61 | 0.52 | 0.53 | ~20 | N/A | N/A | N/A | N/A |
+| **YOLOe base** | Pre fine-tuning | N/A | N/A | N/A | N/A | ~20 | 0.547 | 0.458 | 0.294 | 0.433 |
+| **YOLOe specialized** | Post fine-tuning | N/A | N/A | N/A | N/A | ~20 | 0.911 | 0.760 | 0.803 | 0.825 |
+| **SAM 3** | Zero-shot | 0.742 | 0.671 | 0.757 | 0.723 | 6146 | 0.512 | 0.603 | 0.061 | 0.392 |
+| **SAM 3 + LP** | Linear Probe | 0.742 | 0.671 | 0.758 | 0.724 | 5862 | 0.520 | 0.597 | 0.065 | 0.394 |
+
+**Notes**:
+- **IoU medio**: Mean Intersection over Union for True Positives (IoU ≥ 0.5) on test set. Higher is better for localization quality.
+- **mIoU**: Arithmetic mean of the three class-specific IoU values. For zero-shot prompt-based models (Moondream 2, OMDET TURBO, YOLOe ZSOD), IoU values are reported per text prompt as in the original thesis. For SAM 3, IoU values are computed per detection class on the YOLO-style dataset.
+- **Speed**: Average inference time per image including I/O, model forward pass, and post-processing. Measured on test set (100 images for SAM 3). For Moondream 2, OMDET TURBO and YOLOe (ZSOD/base/specialized), speed values are approximate and derived from the thesis (≈1s, ≈2s, ≈20ms per frame).
+- **AP@0.5**: Average Precision at IoU threshold 0.5. Standard object detection metric.
+- **mAP@0.5**: Mean Average Precision across all classes.
+- **ZSOD**: Zero-Shot Object Detection (no training on target domain).
+- **N/A**: Metric not applicable or not available for this model/configuration.
+
+**Key Observations**:
+- **SAM 3** achieves the highest **localization quality** (mIoU = 0.723) among zero-shot models, significantly outperforming Moondream 2 (0.44) and YOLOe ZSOD (0.53), and **being comparable to OMDET TURBO (0.72), with a slightly higher mIoU**.
+- **Fine-tuned YOLOe** achieves the best detection performance (mAP@0.5 = 0.825) but requires domain-specific training.
+- **SAM 3's inference speed** (≈6s/frame) is slower than YOLOe (20ms) but comparable to other vision-language models like Moondream (1s) and OMDET (2s).
+- **Linear probing** provides minimal improvement for SAM 3 (+0.001 mIoU, +0.002 mAP@0.5) while slightly reducing inference time.
 
 ---
 
