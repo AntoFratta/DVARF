@@ -30,3 +30,23 @@ Global metrics:
   P = 0.5031, R = 0.3453, F1 = 0.4095
   mAP@0.50     = 0.3941
   mAP@0.50:0.95 = 0.1494
+
+
+======================================================================
+Linear Probe - CLASS-SPECIFIC AVERAGE IoU (True Positives with IoU ≥ 0.5)
+======================================================================
+  crashed car on the road: IoU_medio = 0.7422  (n_TP = 124)
+  person at the accident scene: IoU_medio = 0.6708  (n_TP = 21)
+  undamaged car or parked car: IoU_medio = 0.7584  (n_TP = 18)
+
+  MEAN (all classes): IoU_medio_totale = 0.7238
+======================================================================
+
+======================================================================
+Linear Probe - INFERENCE SPEED MEASUREMENT
+======================================================================
+Measured on: test set (100 images)
+Components: I/O + model inference + post-processing (NMS)
+Total time: 586.21 s
+Speed per frame: 5862.08 ms/frame (5.8621 s/frame)
+======================================================================
