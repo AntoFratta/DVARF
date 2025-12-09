@@ -1,6 +1,12 @@
 """
 Utility functions to convert SAM 3 predictions into YOLO-style bounding boxes,
 plus a simple class-wise NMS to reduce duplicates (YOLO-like postprocess).
+
+The main steps are:
+- take the pixel-space bounding boxes produced by SAM 3,
+- convert them to the normalized YOLO format (cx, cy, w, h in [0,1]),
+- optionally apply Non-Maximum Suppression to remove duplicate boxes,
+- serialize the result into text lines ready to be written to .txt files.
 """
 
 from __future__ import annotations
@@ -37,9 +43,11 @@ def sam3_boxes_to_yolo(
     SAM 3 boxes are expected as [x1, y1, x2, y2] in pixel coordinates.
     Output: YOLO format (cx, cy, w, h) normalized to [0, 1].
     """
+    # Extract raw boxes and scores from the SAM 3 prediction.
     boxes = prediction.boxes
     scores = prediction.scores
 
+    # If they are tensors (PyTorch, etc.), convert them to NumPy arrays.
     if hasattr(boxes, "detach"):
         boxes_np = boxes.detach().cpu().numpy()
     else:
@@ -54,48 +62,54 @@ def sam3_boxes_to_yolo(
     W = float(image_width)
     H = float(image_height)
 
+    # If there are no predictions, return an empty list.
     if boxes_np.size == 0 or scores_np.size == 0:
         return yolo_boxes
 
+    # Iterate over each box+score proposed by SAM 3 for this class.
     for box, score in zip(boxes_np, scores_np):
         score_f = float(score)
         if score_f < score_threshold:
+            # Discard predictions with too low confidence.
             continue
 
-        # --- NEW: clip + validate so we don't export out-of-bounds/degenerate boxes ---
+        # --- clip + validate: avoid exporting boxes outside the image or degenerate ones ---
         x1, y1, x2, y2 = map(float, box)
 
-        # clip to image bounds
+        # Clip to image bounds (pixel coordinates).
         x1 = max(0.0, min(W, x1))
         x2 = max(0.0, min(W, x2))
         y1 = max(0.0, min(H, y1))
         y2 = max(0.0, min(H, y2))
 
-        # discard invalid/degenerate boxes
+        # If after clipping the box is empty or degenerate, skip it.
         if x2 <= x1 or y2 <= y1:
             continue
-        # --- end NEW ---
+        # --- end clip + validate ---
 
+        # Convert from corner coordinates (x1,y1,x2,y2) to (cx,cy,w,h) in pixels.
         bw = x2 - x1
         bh = y2 - y1
         cx = x1 + bw / 2.0
         cy = y1 + bh / 2.0
 
+        # Normalize by image size to obtain values in [0,1].
         cx_norm = cx / W
         cy_norm = cy / H
         bw_norm = bw / W
         bh_norm = bh / H
 
-        # optional safety clamp in [0,1]
+        # Safety clamp to limit small numerical errors outside [0,1].
         cx_norm = float(np.clip(cx_norm, 0.0, 1.0))
         cy_norm = float(np.clip(cy_norm, 0.0, 1.0))
         bw_norm = float(np.clip(bw_norm, 0.0, 1.0))
-        bh_norm = float(np.clip(bh_norm, 0.0, 1.0))
+        bh_norm = float(np.clip(bw_norm, 0.0, 1.0))
 
-        # if after clipping it became too tiny, you can drop it (optional):
+        # If desired, we could also discard boxes with almost-zero w/h:
         # if bw_norm <= 0.0 or bh_norm <= 0.0:
         #     continue
 
+        # Append the converted box to the list in YOLO format.
         yolo_boxes.append(
             YoloBox(
                 class_id=class_id,
@@ -125,12 +139,15 @@ def yolo_boxes_to_lines(
     """
     lines: List[str] = []
 
+    # Each YoloBox is converted into a single text line.
     for box in boxes:
         base = f"{box.class_id} {box.cx:.6f} {box.cy:.6f} {box.w:.6f} {box.h:.6f}"
 
         if include_score_column and box.score is not None:
+            # Add the score as a sixth numeric column.
             base = f"{base} {box.score:.6f}"
         elif include_score_comment and box.score is not None:
+            # Or append the score as a comment (not used for automatic parsing).
             base = f"{base}  # score={box.score:.3f}"
 
         lines.append(base)
@@ -145,6 +162,8 @@ def yolo_boxes_to_lines(
 
 def _yolo_to_xyxy_norm(b: YoloBox) -> np.ndarray:
     """Convert YOLO (cx,cy,w,h) normalized to xyxy normalized."""
+    # Convert from (center, width, height) representation
+    # to corner coordinates (x1,y1,x2,y2), still normalized.
     x1 = b.cx - b.w / 2.0
     y1 = b.cy - b.h / 2.0
     x2 = b.cx + b.w / 2.0
@@ -157,6 +176,7 @@ def _iou_xyxy(a: np.ndarray, B: np.ndarray) -> np.ndarray:
     if B.size == 0:
         return np.zeros((0,), dtype=np.float32)
 
+    # Compute intersection between box a and all boxes in B.
     x1 = np.maximum(a[0], B[:, 0])
     y1 = np.maximum(a[1], B[:, 1])
     x2 = np.minimum(a[2], B[:, 2])
@@ -180,6 +200,7 @@ def nms_yolo_boxes(
     - Suppresses duplicates within the SAME class.
     - Keeps higher-score boxes, removes boxes with IoU > iou_threshold.
     """
+    # Group boxes by class_id: NMS is applied separately per class.
     by_class: Dict[int, List[YoloBox]] = {}
     for b in boxes:
         by_class.setdefault(b.class_id, []).append(b)
@@ -187,19 +208,22 @@ def nms_yolo_boxes(
     kept_all: List[YoloBox] = []
 
     for cls, cls_boxes in by_class.items():
-        # require scores for ranking
+        # Require that boxes have a score (needed to sort them).
         cls_boxes = [b for b in cls_boxes if b.score is not None]
         if not cls_boxes:
             continue
 
+        # Sort class boxes by descending score (greedy NMS).
         cls_boxes.sort(key=lambda b: float(b.score), reverse=True)
 
+        # Precompute normalized xyxy coordinates and scores as NumPy arrays.
         xyxy = np.stack([_yolo_to_xyxy_norm(b) for b in cls_boxes], axis=0)
         scores = np.asarray([float(b.score) for b in cls_boxes], dtype=np.float32)
 
         order = np.argsort(-scores)
         keep_idx: List[int] = []
 
+        # Main greedy NMS loop: keep the best-scoring box and discard overlapping ones.
         while order.size > 0 and len(keep_idx) < max_det:
             i = int(order[0])
             keep_idx.append(i)
@@ -208,10 +232,11 @@ def nms_yolo_boxes(
 
             rest = order[1:]
             ious = _iou_xyxy(xyxy[i], xyxy[rest])
+            # Keep only boxes whose IoU with the chosen one is <= threshold.
             order = rest[ious <= iou_threshold]
 
         kept_all.extend([cls_boxes[i] for i in keep_idx])
 
-    # global cap + sort by score
+    # Global cap + sort by score: sort all kept boxes by score and apply a global limit.
     kept_all.sort(key=lambda b: float(b.score or 0.0), reverse=True)
     return kept_all[:max_det]

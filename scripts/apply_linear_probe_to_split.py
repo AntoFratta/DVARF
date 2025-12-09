@@ -68,9 +68,12 @@ def _features_from_yolo(
 
     Coordinates (cx, cy, w, h) are assumed to be normalized in [0, 1].
     """
+    # Derived geometric features from the normalized bounding box
     area = w * h
     aspect_ratio = w / max(h, 1e-6)
 
+    # Same layout as used during training:
+    # [score, center_x, center_y, width, height, area, aspect_ratio]
     return np.asarray(
         [float(score), cx, cy, w, h, area, aspect_ratio],
         dtype=np.float32,
@@ -127,6 +130,7 @@ def apply_linear_probe_to_split(split: str = "test") -> Path:
     print(f"  Num classes:           {num_classes}")
     print(f"  Feature dimension:     {feature_dim}")
 
+    # Collect all YOLO prediction files, assuming numeric stems (e.g. "0001.txt").
     pred_files: List[Path] = sorted(
         in_dir.glob("*.txt"),
         key=lambda p: int(p.stem),
@@ -134,15 +138,18 @@ def apply_linear_probe_to_split(split: str = "test") -> Path:
     if not pred_files:
         raise RuntimeError(f"No prediction files found in {in_dir}")
 
+    # Loop over prediction files (one per image).
     for idx, pred_path in enumerate(pred_files, start=1):
         image_id = pred_path.stem
         out_path = out_dir / f"{image_id}.txt"
 
         new_lines: List[str] = []
 
+        # Read original SAM 3 predictions for this image
         with pred_path.open("r", encoding="utf-8") as f:
             for line in f:
                 parts = line.strip().split()
+                # Expect at least class + 4 coords; skip malformed lines.
                 if len(parts) < 5:
                     continue
 
@@ -155,11 +162,12 @@ def apply_linear_probe_to_split(split: str = "test") -> Path:
                 cy = float(parts[2])
                 w = float(parts[3])
                 h = float(parts[4])
+                # If no score column is present, default to 1.0
                 score_original = float(parts[5]) if len(parts) >= 6 else 1.0
 
-                # Build feature vector and compute new score
+                # Build feature vector and compute new score with the linear probe
                 feats = _features_from_yolo(cx, cy, w, h, score_original)
-                w_c = all_weights[class_id]  # (D,)
+                w_c = all_weights[class_id]  # weights for this class (D,)
                 b_c = float(all_biases[class_id])
 
                 logit = float(feats @ w_c + b_c)
@@ -168,7 +176,10 @@ def apply_linear_probe_to_split(split: str = "test") -> Path:
                 # Ensure score is in [0, 1]
                 score_new = float(np.clip(score_new, 0.0, 1.0))
 
-                new_line = f"{class_id} {cx:.6f} {cy:.6f} {w:.6f} {h:.6f} {score_new:.6f}"
+                # Same boxes as original, but with updated score from the probe
+                new_line = (
+                    f"{class_id} {cx:.6f} {cy:.6f} {w:.6f} {h:.6f} {score_new:.6f}"
+                )
                 new_lines.append(new_line)
 
         # Write updated predictions for this image

@@ -79,24 +79,26 @@ def train_logistic_regression(
     Returns:
         LogisticRegressionWeights with learned parameters.
     """
+    # Ensure consistent dtypes for training
     x = x.astype(np.float32)
     y = y.astype(np.float32)
 
     n_samples, n_features = x.shape
+    # Initialize weights and bias to zero
     w = np.zeros(n_features, dtype=np.float32)
     b = 0.0
 
     for epoch in range(num_epochs):
-        # Forward pass
+        # Forward pass: compute logits and probabilities
         logits = x @ w + b
         probs = _sigmoid(logits)
 
-        # Compute gradients
+        # Compute gradients of the loss w.r.t. weights and bias
         error = probs - y  # shape (N,)
         grad_w = (x.T @ error) / float(n_samples) + l2_weight * w
         grad_b = float(np.mean(error))
 
-        # Parameter update
+        # Gradient descent parameter update
         w -= learning_rate * grad_w
         b -= learning_rate * grad_b
 
@@ -125,6 +127,7 @@ def train_linear_probe(
     Returns:
         Path to the saved .npz file with all class-wise weights.
     """
+    # Path to the linear-probe dataset (.npz) built from SAM 3 detections.
     in_path = (
         PROJECT_ROOT
         / "data"
@@ -134,11 +137,13 @@ def train_linear_probe(
     )
 
     if not in_path.exists():
+        # The dataset must be created beforehand by build_linear_probe_dataset.py
         raise FileNotFoundError(
             f"Linear probe dataset not found: {in_path}. "
             f"Please run 'build_linear_probe_dataset.py' first for split='{split}'."
         )
 
+    # Load features, binary targets (TP/FP), and class ids.
     data = np.load(in_path)
     features = data["features"]          # (N, D)
     targets = data["targets"]            # (N,)
@@ -160,10 +165,12 @@ def train_linear_probe(
     all_weights = np.zeros((num_classes, feature_dim), dtype=np.float32)
     all_biases = np.zeros((num_classes,), dtype=np.float32)
 
-    # For reporting purposes
-    class_stats: Dict[int, Tuple[int, int]] = {}  # class_id -> (num_pos, num_neg)
+    # For reporting purposes: class_id -> (num_pos, num_neg)
+    class_stats: Dict[int, Tuple[int, int]] = {}
 
+    # Train a separate logistic regression for each class.
     for class_id in range(num_classes):
+        # Select only samples belonging to this class.
         mask = class_ids == class_id
         x_c = features[mask]
         y_c = targets[mask]
@@ -178,6 +185,8 @@ def train_linear_probe(
             f"{num_c} samples -> {num_pos} pos, {num_neg} neg"
         )
 
+        # If a class has only positives or only negatives, we cannot train
+        # a meaningful logistic regression model for it.
         if num_pos == 0 or num_neg == 0:
             print(
                 "  WARNING: class has only one label type (all pos or all neg). "
@@ -185,6 +194,7 @@ def train_linear_probe(
             )
             continue
 
+        # Train class-specific logistic regression on (x_c, y_c).
         model = train_logistic_regression(
             x_c,
             y_c,
@@ -196,15 +206,17 @@ def train_linear_probe(
         all_weights[class_id] = model.weights
         all_biases[class_id] = model.bias
 
-        # Simple training accuracy at threshold 0.5 (for curiosity)
+        # Simple training accuracy at threshold 0.5 (mainly for debugging).
         logits = x_c @ model.weights + model.bias
         preds = (logits >= 0.0).astype(np.int64)
         acc = float(np.mean(preds == y_c))
         print(f"  Training accuracy (thr=0.5): {acc:.4f}")
 
+    # Ensure output directory exists.
     out_dir = PROJECT_ROOT / "data" / "processed" / "linear_probe"
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    # Save all class-wise weights and biases in a single .npz file.
     out_path = out_dir / "sam3_linear_probe_weights.npz"
     np.savez_compressed(
         out_path,

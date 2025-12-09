@@ -1,3 +1,14 @@
+"""
+Run SAM 3 over a given dataset split and export predictions.
+
+For each image in the chosen split, this script:
+- queries SAM 3 once per class using the corresponding text prompt,
+- converts the resulting detections to YOLO-style bounding boxes,
+- applies class-wise NMS to reduce duplicate boxes,
+- writes predictions to .txt files (one per image),
+- and optionally saves binary segmentation masks as PNGs.
+"""
+
 from __future__ import annotations
 
 import sys
@@ -7,7 +18,7 @@ from typing import Optional, List
 
 from PIL import Image
 
-# Add project root to PYTHONPATH
+# Add project root to PYTHONPATH so that "src" can be imported when running as a script.
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.append(str(PROJECT_ROOT))
@@ -41,29 +52,38 @@ def run_sam3_on_split(
     Run SAM 3 on all images of a given split and save YOLO-style predictions
     and, optionally, segmentation masks.
 
-    For each image:
-    - SAM 3 is queried once per class using the corresponding text prompt.
-    - Predictions are converted to YOLO format (cx, cy, w, h in [0, 1]) and
-      written to a text file: class cx cy w h score.
-    - Class-wise NMS is applied before writing to reduce duplicates.
-    - If save_segmentations is True, binary masks are exported as PNG images.
+    Args:
+        split: Dataset split to process ("train", "val", or "test").
+        score_threshold: Minimum confidence for detections/masks to be exported.
+        max_images: Optional limit on the number of images to process.
+        save_segmentations: If True, also export binary segmentation masks as PNG.
+        max_masks_per_image_per_class: Optional max number of masks saved per image/class.
+        nms_iou: IoU threshold used for class-wise NMS.
+        nms_max_det: Global cap on the number of boxes kept after NMS per image.
     """
+    # Resolve the directory containing the input images for this split.
     images_dir = get_images_dir(split)
+
+    # Resolve and create (if needed) the directory where YOLO predictions will be written.
     pred_dir = get_sam3_yolo_predictions_dir(split)
     pred_dir.mkdir(parents=True, exist_ok=True)
 
     segm_dir = None
     if save_segmentations:
+        # Resolve and create (if needed) the directory where segmentation masks will be saved.
         segm_dir = get_sam3_segmentation_dir(split)
         segm_dir.mkdir(parents=True, exist_ok=True)
 
+    # Collect all JPG and PNG images, assuming stems are numeric (e.g., "0001.jpg").
     image_files = sorted(
         list(images_dir.glob("*.jpg")) + list(images_dir.glob("*.png")),
         key=lambda p: int(p.stem),
     )
     if not image_files:
+        # If there are no images, fail fast with a clear error.
         raise RuntimeError(f"No images found in {images_dir}")
 
+    # Optionally restrict to the first max_images images for quicker experiments.
     if max_images is not None:
         image_files = image_files[:max_images]
 
@@ -76,20 +96,26 @@ def run_sam3_on_split(
     if save_segmentations:
         print(f"Segmentation directory: {segm_dir}")
 
+    # Instantiate a single SAM 3 model to be reused for all images/classes.
     model = Sam3ImageModel()
     t_start = time()
 
+    # Main loop over all images in the split.
     for idx, img_path in enumerate(image_files, start=1):
+        # Load the image in RGB mode.
         image = Image.open(img_path).convert("RGB")
         width, height = image.size
 
+        # Accumulate YOLO-format boxes from all classes for this image.
         all_boxes: List[YoloBox] = []
         image_id = img_path.stem
 
+        # Loop over all classes defined in CLASS_PROMPTS and query SAM 3 per class.
         for class_id, prompt in CLASS_PROMPTS.items():
+            # Run SAM 3 for the current image and text prompt (single class).
             prediction = model.predict_with_text(img_path, prompt)
 
-            # Detections
+            # Convert SAM 3 detections (pixel boxes) into YOLO-normalized boxes.
             yolo_boxes = sam3_boxes_to_yolo(
                 prediction=prediction,
                 class_id=class_id,
@@ -99,7 +125,7 @@ def run_sam3_on_split(
             )
             all_boxes.extend(yolo_boxes)
 
-            # Segmentations (optional)
+            # Optionally also export segmentation masks for this class.
             if save_segmentations and segm_dir is not None:
                 save_sam3_masks_for_image(
                     prediction=prediction,
@@ -110,18 +136,20 @@ def run_sam3_on_split(
                     max_masks=max_masks_per_image_per_class,
                 )
 
-        # Apply NMS once per image (after accumulating boxes from all classes)
+        # Apply class-wise NMS to all boxes collected for this image
+        # (this will remove duplicates per class).
         before = len(all_boxes)
         all_boxes = nms_yolo_boxes(all_boxes, iou_threshold=nms_iou, max_det=nms_max_det)
         after = len(all_boxes)
 
-        # YOLO-style predictions with score as 6th column
+        # Convert YoloBox instances to YOLO-style text lines, including score as 6th column.
         lines = yolo_boxes_to_lines(
             all_boxes,
             include_score_column=True,
             include_score_comment=False,
         )
 
+        # Write predictions for this image to a .txt file with the same stem as the image.
         out_path = pred_dir / f"{image_id}.txt"
         with out_path.open("w", encoding="utf-8") as f:
             for line in lines:
@@ -138,13 +166,16 @@ def run_sam3_on_split(
 
 
 def main() -> None:
+    """
+    Entry point for running SAM 3 over a chosen split with default settings.
+    """
     split = "test"
     score_threshold = 0.26
-    max_images: Optional[int] = None  # None = all images
-    save_segmentations = True         # False if you don't need masks on test
+    max_images: Optional[int] = None  # None = process all images in the split.
+    save_segmentations = True         # Set False if segmentation masks are not needed.
     max_masks_per_image_per_class: Optional[int] = None
 
-    # NMS params (start YOLO-ish)
+    # NMS parameters (YOLO-like defaults).
     nms_iou = 0.7
     nms_max_det = 300
 
