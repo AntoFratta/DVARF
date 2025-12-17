@@ -28,6 +28,7 @@ class YoloBox:
     w: float
     h: float
     score: Optional[float] = None
+    features: Optional[np.ndarray] = None  # Query embeddings (256-d) from SAM3
 
 
 def sam3_boxes_to_yolo(
@@ -43,9 +44,10 @@ def sam3_boxes_to_yolo(
     SAM 3 boxes are expected as [x1, y1, x2, y2] in pixel coordinates.
     Output: YOLO format (cx, cy, w, h) normalized to [0, 1].
     """
-    # Extract raw boxes and scores from the SAM 3 prediction.
+    # Extract raw boxes, scores, and features from the SAM 3 prediction.
     boxes = prediction.boxes
     scores = prediction.scores
+    features = prediction.features
 
     # If they are tensors (PyTorch, etc.), convert them to NumPy arrays.
     if hasattr(boxes, "detach"):
@@ -58,6 +60,14 @@ def sam3_boxes_to_yolo(
     else:
         scores_np = np.asarray(scores)
 
+    # Convert features to numpy if present
+    features_np = None
+    if features is not None:
+        if hasattr(features, "detach"):
+            features_np = features.detach().cpu().numpy()
+        else:
+            features_np = np.asarray(features)
+
     yolo_boxes: List[YoloBox] = []
     W = float(image_width)
     H = float(image_height)
@@ -66,8 +76,12 @@ def sam3_boxes_to_yolo(
     if boxes_np.size == 0 or scores_np.size == 0:
         return yolo_boxes
 
-    # Iterate over each box+score proposed by SAM 3 for this class.
-    for box, score in zip(boxes_np, scores_np):
+    # Iterate over each box+score+feature proposed by SAM 3 for this class.
+    num_predictions = len(boxes_np)
+    for idx in range(num_predictions):
+        box = boxes_np[idx]
+        score = scores_np[idx]
+        feat = features_np[idx] if features_np is not None else None
         score_f = float(score)
         if score_f < score_threshold:
             # Discard predictions with too low confidence.
@@ -103,7 +117,7 @@ def sam3_boxes_to_yolo(
         cx_norm = float(np.clip(cx_norm, 0.0, 1.0))
         cy_norm = float(np.clip(cy_norm, 0.0, 1.0))
         bw_norm = float(np.clip(bw_norm, 0.0, 1.0))
-        bh_norm = float(np.clip(bw_norm, 0.0, 1.0))
+        bh_norm = float(np.clip(bh_norm, 0.0, 1.0))
 
         # If desired, we could also discard boxes with almost-zero w/h:
         # if bw_norm <= 0.0 or bh_norm <= 0.0:
@@ -118,6 +132,7 @@ def sam3_boxes_to_yolo(
                 w=bw_norm,
                 h=bh_norm,
                 score=score_f,
+                features=feat,
             )
         )
 

@@ -12,11 +12,8 @@ This script:
   Each line is expected to be:
       class_id  cx  cy  w  h  score
 
-- For each prediction, builds the same feature vector used during training:
-      [score, cx, cy, w, h, area, aspect_ratio]
-  where:
-      area = w * h
-      aspect_ratio = w / h
+- Loads semantic features (257-d: 256-d query embeddings + score) from .npz files,
+  aligned by line index with the .txt file.
 
 - Applies the class-specific logistic regression weights learned by
   `train_linear_probe.py`, stored in:
@@ -33,7 +30,7 @@ way as the original SAM 3 predictions.
 
 import sys
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 import numpy as np
 
@@ -49,44 +46,48 @@ from src.config import (  # noqa: E402
 from src.prompts import CLASS_PROMPTS  # noqa: E402
 
 
+def _load_features_for_image(
+    features_dir: Path,
+    image_id: str,
+) -> Optional[np.ndarray]:
+    """
+    Load the query features saved for an image.
+
+    Returns:
+        Features array of shape (N, 257) where N is number of predictions.
+        Features are aligned by index with lines in the .txt file.
+        Returns None if file doesn't exist.
+    """
+    features_path = features_dir / f"{image_id}.npz"
+    if not features_path.exists():
+        return None
+
+    data = np.load(features_path)
+    return data['features']  # (N, 257) float16
+
+
+
+
+
 def _sigmoid(x: np.ndarray) -> np.ndarray:
     """Numerically stable sigmoid."""
     x_clipped = np.clip(x, -50.0, 50.0)
     return 1.0 / (1.0 + np.exp(-x_clipped))
 
 
-def _features_from_yolo(
-    cx: float,
-    cy: float,
-    w: float,
-    h: float,
-    score: float,
-) -> np.ndarray:
-    """
-    Build the feature vector used by the linear probe from YOLO-normalized
-    coordinates and the original SAM 3 score.
-
-    Coordinates (cx, cy, w, h) are assumed to be normalized in [0, 1].
-    """
-    # Derived geometric features from the normalized bounding box
-    area = w * h
-    aspect_ratio = w / max(h, 1e-6)
-
-    # Same layout as used during training:
-    # [score, center_x, center_y, width, height, area, aspect_ratio]
-    return np.asarray(
-        [float(score), cx, cy, w, h, area, aspect_ratio],
-        dtype=np.float32,
-    )
-
-
-def apply_linear_probe_to_split(split: str = "test") -> Path:
+def apply_linear_probe_to_split(
+    split: str = "test",
+    features_dir: Optional[Path] = None,
+) -> Path:
     """
     Re-score SAM 3 predictions on a given split using the trained linear probe.
 
     Args:
         split:
             Dataset split to process ('train', 'val', or 'test').
+        features_dir:
+            Optional path to directory containing .npz feature files.
+            If None, defaults to data/processed/features/sam3_prehead/<split>/
 
     Returns:
         Path to the directory containing the re-scored YOLO prediction files.
@@ -97,6 +98,16 @@ def apply_linear_probe_to_split(split: str = "test") -> Path:
     # Where we will write the re-scored predictions
     out_dir = PREDICTIONS_DIR / "sam3_linear_probe_yolo" / split
     out_dir.mkdir(parents=True, exist_ok=True)
+
+    # Where the features are stored
+    if features_dir is None:
+        features_dir = PROJECT_ROOT / "data" / "processed" / "features" / "sam3_prehead" / split
+    
+    if not features_dir.exists():
+        raise FileNotFoundError(
+            f"Features directory not found: {features_dir}. "
+            f"Please run 'run_sam3_on_split.py' first to generate features."
+        )
 
     # Load class-wise weights and biases learned by train_linear_probe.py
     weights_path = (
@@ -127,8 +138,9 @@ def apply_linear_probe_to_split(split: str = "test") -> Path:
     print(f"Applying linear probe on split='{split}'")
     print(f"  Input predictions dir:  {in_dir}")
     print(f"  Output predictions dir: {out_dir}")
-    print(f"  Num classes:           {num_classes}")
-    print(f"  Feature dimension:     {feature_dim}")
+    print(f"  Features directory:     {features_dir}")
+    print(f"  Num classes:            {num_classes}")
+    print(f"  Feature dimension:      {feature_dim}")
 
     # Collect all YOLO prediction files, assuming numeric stems (e.g. "0001.txt").
     pred_files: List[Path] = sorted(
@@ -143,20 +155,48 @@ def apply_linear_probe_to_split(split: str = "test") -> Path:
         image_id = pred_path.stem
         out_path = out_dir / f"{image_id}.txt"
 
+        # Load features for this image
+        feat_data = _load_features_for_image(features_dir, image_id)
+        if feat_data is None:
+            # CRITICAL: If we have predictions (.txt exists) but no features (.npz missing),
+            # this is a data integrity issue - fail explicitly rather than skip silently
+            raise FileNotFoundError(
+                f"Missing features for image {image_id}. "
+                f"Predictions file exists at {pred_path} but no corresponding .npz found in {features_dir}. "
+                f"Please re-run 'run_sam3_on_split.py' to regenerate features."
+            )
+        
+        # Validate feature dimensions match expected (257-d: 256-d query + score)
+        if len(feat_data.shape) != 2 or feat_data.shape[1] != feature_dim:
+            raise ValueError(
+                f"Image {image_id}: feature dimension mismatch. "
+                f"Expected shape (N, {feature_dim}), got {feat_data.shape}. "
+                f"This may indicate old features or pipeline version mismatch."
+            )
+
         new_lines: List[str] = []
 
         # Read original SAM 3 predictions for this image
+        # Use enumerate to track line index for feature alignment
+        line_idx = -1
         with pred_path.open("r", encoding="utf-8") as f:
-            for line in f:
+            for line_idx, line in enumerate(f):
                 parts = line.strip().split()
-                # Expect at least class + 4 coords; skip malformed lines.
+                # Expect at least class + 4 coords; if malformed, this is a corruption issue
                 if len(parts) < 5:
-                    continue
+                    raise ValueError(
+                        f"Malformed line {line_idx} in {pred_path}: expected at least 5 fields, got {len(parts)}. "
+                        f"Line content: '{line.strip()}'. This may indicate file corruption."
+                    )
 
                 class_id = int(parts[0])
                 if class_id < 0 or class_id >= num_classes:
-                    # Ignore invalid class ids
-                    continue
+                    # CRITICAL: Cannot skip this line - would break feature alignment
+                    # If we skip with continue, line_idx advances but we don't consume feature
+                    raise ValueError(
+                        f"Invalid class_id {class_id} in {pred_path} line {line_idx}. "
+                        f"Expected 0 <= class_id < {num_classes}. This may indicate data corruption."
+                    )
 
                 cx = float(parts[1])
                 cy = float(parts[2])
@@ -165,8 +205,19 @@ def apply_linear_probe_to_split(split: str = "test") -> Path:
                 # If no score column is present, default to 1.0
                 score_original = float(parts[5]) if len(parts) >= 6 else 1.0
 
-                # Build feature vector and compute new score with the linear probe
-                feats = _features_from_yolo(cx, cy, w, h, score_original)
+                # Get feature directly using line_idx (perfect 1:1 alignment)
+                if line_idx >= len(feat_data):
+                    # This indicates .txt/.npz misalignment - fail explicitly
+                    raise IndexError(
+                        f"Image {image_id}: line_idx {line_idx} out of bounds (features has {len(feat_data)} entries). "
+                        f"This indicates .txt/.npz misalignment - files may not have been generated together. "
+                        f"Please re-run 'run_sam3_on_split.py' for split='{split}'."
+                    )
+                    
+                # Direct lookup: feature for this prediction is at features[line_idx]
+                feats = feat_data[line_idx].astype(np.float32)  # (257,)
+                
+                # Use the linear probe to compute new score
                 w_c = all_weights[class_id]  # weights for this class (D,)
                 b_c = float(all_biases[class_id])
 
@@ -181,6 +232,16 @@ def apply_linear_probe_to_split(split: str = "test") -> Path:
                     f"{class_id} {cx:.6f} {cy:.6f} {w:.6f} {h:.6f} {score_new:.6f}"
                 )
                 new_lines.append(new_line)
+        
+        # CRITICAL: Verify that we processed exactly as many lines as we have features
+        # This catches cases where .txt and .npz are misaligned (extra features or missing lines)
+        num_lines_processed = line_idx + 1 if 'line_idx' in locals() else 0
+        if num_lines_processed != len(feat_data):
+            raise ValueError(
+                f"Image {image_id}: .txt/.npz alignment error. "
+                f"Processed {num_lines_processed} lines but have {len(feat_data)} features. "
+                f"Files may not have been generated together. Please re-run 'run_sam3_on_split.py'."
+            )
 
         # Write updated predictions for this image
         with out_path.open("w", encoding="utf-8") as f_out:

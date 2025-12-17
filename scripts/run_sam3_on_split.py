@@ -16,6 +16,7 @@ from pathlib import Path
 from time import time
 from typing import Optional, List
 
+import numpy as np
 from PIL import Image
 
 # Add project root to PYTHONPATH so that "src" can be imported when running as a script.
@@ -74,6 +75,10 @@ def run_sam3_on_split(
         segm_dir = get_sam3_segmentation_dir(split)
         segm_dir.mkdir(parents=True, exist_ok=True)
 
+    # Create directory for feature embeddings (.npz files)
+    features_dir = PROJECT_ROOT / "data" / "processed" / "features" / "sam3_prehead" / split
+    features_dir.mkdir(parents=True, exist_ok=True)
+
     # Collect all JPG and PNG images, assuming stems are numeric (e.g., "0001.jpg").
     image_files = sorted(
         list(images_dir.glob("*.jpg")) + list(images_dir.glob("*.png")),
@@ -93,6 +98,7 @@ def run_sam3_on_split(
     print(f"Prediction directory: {pred_dir}")
     print(f"Score threshold (export): {score_threshold}")
     print(f"NMS: iou={nms_iou}, max_det={nms_max_det}")
+    print(f"Features directory: {features_dir}")
     if save_segmentations:
         print(f"Segmentation directory: {segm_dir}")
 
@@ -151,14 +157,54 @@ def run_sam3_on_split(
 
         # Write predictions for this image to a .txt file with the same stem as the image.
         out_path = pred_dir / f"{image_id}.txt"
+        
+        # CRITICAL: Check that ALL boxes have features before writing anything
+        # This ensures perfect alignment between .txt lines and .npz features
+        boxes_without_features = [i for i, box in enumerate(all_boxes) if box.features is None]
+        if boxes_without_features:
+            raise RuntimeError(
+                f"Image {image_id}: {len(boxes_without_features)} boxes missing features "
+                f"(indices: {boxes_without_features[:5]}...). Cannot guarantee .txt/.npz alignment. "
+                f"This should never happen - check SAM3 feature extraction."
+            )
+        
+        # Now safe to write: all boxes have features
         with out_path.open("w", encoding="utf-8") as f:
             for line in lines:
                 f.write(line + "\n")
 
+        # Save features aligned with the final boxes (after NMS)
+        # CRITICAL: Features must be in same order as lines in .txt file
+        # We concatenate [query_embedding_256d, score] to get 257-d features
+        box_features = []
+        
+        for box in all_boxes:
+            # We already verified all boxes have features above
+            # Concatenate 256-d query embedding with original score (1-d) -> 257-d total
+            score_val = box.score if box.score is not None else 0.0
+            # FIX: np.concatenate doesn't accept dtype parameter
+            feat_with_score = np.concatenate([box.features, [score_val]]).astype(np.float32)
+            box_features.append(feat_with_score)
+
+        # Save to .npz with features aligned to .txt lines
+        # IMPORTANT: Always save .npz even if empty (0 detections) to maintain consistency
+        # This prevents FileNotFoundError in apply_linear_probe for images with no detections
+        if box_features:
+            features_arr = np.array(box_features, dtype=np.float16)  # (N, 257)
+        else:
+            # Empty array with correct shape: (0, 257)
+            features_arr = np.empty((0, 257), dtype=np.float16)
+
+        features_path = features_dir / f"{image_id}.npz"
+        np.savez_compressed(
+            features_path,
+            features=features_arr,  # (N, 257): [256-d query + 1-d score]
+        )
+
         elapsed = time() - t_start
         print(
             f"[{idx}/{len(image_files)}] {img_path.name} -> {out_path.name} "
-            f"({before}->{after} boxes after NMS, elapsed {elapsed:.1f}s)"
+            f"({before}->{after} boxes after NMS, {len(box_features) if box_features else 0} features, elapsed {elapsed:.1f}s)"
         )
 
     total_time = time() - t_start

@@ -1,15 +1,14 @@
 from __future__ import annotations
 
 """
-Build a training dataset for a simple linear probe on top of SAM 3 detections.
+Build a training dataset for a linear probe on top of SAM 3 detections.
 
 For a given split (e.g. "train"), this script:
 - Loads YOLO-style ground-truth boxes.
 - Loads SAM 3 YOLO-style predictions for the same split.
+- Loads semantic features (257-d: 256-d query embeddings + score) from .npz files.
 - Matches predictions to ground truth with IoU >= 0.5 (same logic as eval_yolo).
-- For each prediction, extracts a small feature vector that depends ONLY on
-  the prediction itself (no GT information), e.g.:
-    [score, cx, cy, w, h, area, aspect_ratio]
+- For each prediction, uses the 257-d semantic feature vector aligned by line index.
 - Assigns a binary label:
     1 = true positive (TP), 0 = false positive (FP) according to the matching.
 - Saves the resulting features and labels to:
@@ -18,7 +17,7 @@ For a given split (e.g. "train"), this script:
 
 import sys
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Optional
 
 import numpy as np
 
@@ -35,36 +34,98 @@ from src.eval_yolo import (  # noqa: E402
 )
 
 
-def _box_features_xyxy(box_xyxy: np.ndarray, score: float) -> np.ndarray:
+def _load_features_for_image(
+    features_dir: Path,
+    image_id: str,
+) -> Optional[np.ndarray]:
     """
-    Compute a small feature vector from a normalized xyxy box and its score.
+    Load the query features saved for an image.
 
-    Box coordinates are expected to be normalized in [0, 1], as returned by
-    _load_yolo_dataset in eval_yolo.py.
+    Args:
+        features_dir: Directory containing .npz feature files
+        image_id: Image identifier (stem of the image file)
+
+    Returns:
+        Features array of shape (N, 257) where N is number of predictions.
+        Features are aligned by index with lines in the .txt file.
+        Returns None if file doesn't exist.
     """
-    # Unpack the normalized corner coordinates [x1, y1, x2, y2].
-    x1, y1, x2, y2 = box_xyxy
+    features_path = features_dir / f"{image_id}.npz"
+    if not features_path.exists():
+        return None
 
-    # Basic geometric properties of the box in normalized coordinates.
-    w = x2 - x1
-    h = y2 - y1
-    cx = x1 + w / 2.0
-    cy = y1 + h / 2.0
-    area = w * h
-    aspect_ratio = w / max(h, 1e-6)  # avoid division by zero
+    data = np.load(features_path)
+    return data['features']  # (N, 257) float16
 
-    # Feature vector used by the linear probe:
-    # [score, center_x, center_y, width, height, area, aspect_ratio]
-    return np.asarray(
-        [float(score), cx, cy, w, h, area, aspect_ratio],
-        dtype=np.float32,
-    )
+
+def _load_predictions_with_line_indices(
+    preds_dir: Path,
+    num_classes: int,
+    confidence_threshold: float = 0.0,
+) -> Dict[int, List[Tuple[str, int, np.ndarray, float]]]:
+    """
+    Load YOLO predictions from .txt files, preserving line order.
+    
+    This is different from _load_yolo_dataset which sorts by score.
+    We need to preserve the original line order to align with features array.
+    
+    Args:
+        preds_dir: Directory containing prediction .txt files
+        num_classes: Number of classes
+        confidence_threshold: Minimum score threshold
+    
+    Returns:
+        Dict mapping class_id -> list of (img_id, line_idx, box_xyxy, score)
+        where line_idx is the 0-based index of the line in the .txt file.
+    """
+    from src.eval_yolo import _yolo_to_xyxy  # Convert cxcywh -> xyxy
+    
+    preds_by_class: Dict[int, List[Tuple[str, int, np.ndarray, float]]] = {
+        c: [] for c in range(num_classes)
+    }
+    
+    # Get all prediction files
+    pred_files = sorted(preds_dir.glob("*.txt"), key=lambda p: p.stem)
+    
+    for pred_file in pred_files:
+        img_id = pred_file.stem
+        
+        with pred_file.open("r", encoding="utf-8") as f:
+            for line_idx, line in enumerate(f):
+                parts = line.strip().split()
+                if len(parts) < 5:
+                    continue
+                
+                class_id = int(parts[0])
+                if class_id < 0 or class_id >= num_classes:
+                    continue
+                
+                # YOLO format: class cx cy w h [score]
+                cx = float(parts[1])
+                cy = float(parts[2])
+                w = float(parts[3])
+                h = float(parts[4])
+                score = float(parts[5]) if len(parts) >= 6 else 1.0
+                
+                if score < confidence_threshold:
+                    continue
+                
+                # Convert to xyxy for IoU computation
+                box_xyxy = _yolo_to_xyxy(np.array([cx, cy, w, h], dtype=np.float32))
+                
+                # Store: (img_id, line_idx, box_xyxy, score)
+                preds_by_class[class_id].append((img_id, line_idx, box_xyxy, score))
+    
+    return preds_by_class
+
+
 
 
 def build_linear_probe_dataset_for_split(
     split: str,
     confidence_threshold: float = 0.26,
     iou_threshold: float = 0.5,
+    features_dir: Optional[Path] = None,
 ) -> Path:
     """
     Build the linear-probe dataset for a single split (e.g. 'train').
@@ -79,37 +140,70 @@ def build_linear_probe_dataset_for_split(
         iou_threshold:
             IoU threshold used to decide if a prediction is TP or FP,
             consistent with the detection evaluation (typically 0.5).
+        features_dir:
+            Optional path to directory containing .npz feature files.
+            If None, defaults to data/processed/features/sam3_prehead/<split>/
 
     Returns:
         Path to the saved .npz file containing:
-            - features: float32 array of shape (N, D)
+            - features: float32 array of shape (N, 257) where N=num_predictions
             - targets: int64 array of shape (N,) with values {0, 1}
             - class_ids: int64 array of shape (N,) with class indices
     """
-    # Get directories for ground-truth labels and SAM 3 predictions.
+    # Get directories for ground-truth labels, SAM 3 predictions, and features.
     labels_dir = get_labels_dir(split)
     preds_dir = get_sam3_yolo_predictions_dir(split)
+    
+    if features_dir is None:
+        features_dir = PROJECT_ROOT / "data" / "processed" / "features" / "sam3_prehead" / split
+    
+    if not features_dir.exists():
+        raise FileNotFoundError(
+            f"Features directory not found: {features_dir}. "
+            f"Please run 'run_sam3_on_split.py' first to generate features."
+        )
+    
     num_classes = len(CLASS_PROMPTS)
 
     print(f"Building linear-probe dataset for split='{split}'")
     print(f"  Labels directory:      {labels_dir}")
     print(f"  Predictions directory: {preds_dir}")
+    print(f"  Features directory:    {features_dir}")
     print(f"  Confidence threshold:  {confidence_threshold}")
     print(f"  IoU threshold:         {iou_threshold}")
 
-    # Load GT and predictions in YOLO format, grouped by class and image.
-    # - gt_by_class[class_id][img_id] -> array of GT boxes (xyxy, normalized)
-    # - preds_by_class[class_id] -> list of (img_id, box_xyxy, score)
-    gt_by_class, preds_by_class = _load_yolo_dataset(
+    # Load GT using the standard function (only GT, not predictions)
+    gt_by_class, _ = _load_yolo_dataset(
         labels_dir=labels_dir,
+        preds_dir=preds_dir,  # Not used for GT loading
+        num_classes=num_classes,
+        confidence_threshold=0.0,  # Not relevant for GT
+    )
+    
+    # Load predictions WITH line indices (instead of sorted by score)
+    preds_by_class_with_idx = _load_predictions_with_line_indices(
         preds_dir=preds_dir,
         num_classes=num_classes,
         confidence_threshold=confidence_threshold,
     )
 
+    # Build a mapping from image_id -> features for fast lookup
+    print("  Loading feature files...")
+    feature_cache: Dict[str, np.ndarray] = {}
+    feature_files = list(features_dir.glob("*.npz"))
+    for feat_file in feature_files:
+        img_id = feat_file.stem
+        feat_data = _load_features_for_image(features_dir, img_id)
+        if feat_data is not None:
+            feature_cache[img_id] = feat_data
+    print(f"  Loaded features for {len(feature_cache)} images")
+
     all_features: List[np.ndarray] = []
     all_targets: List[int] = []
     all_class_ids: List[int] = []
+
+    # Track images with missing features for final reporting
+    missing_features_images: set[str] = set()
 
     # For per-class statistics / debugging: class_id -> (num_pos, num_neg)
     per_class_counts: Dict[int, Tuple[int, int]] = {}
@@ -117,17 +211,17 @@ def build_linear_probe_dataset_for_split(
     # Loop over all classes; we build TP/FP labels independently per class.
     for class_id in range(num_classes):
         gt_dict = gt_by_class.get(class_id, {})
-        preds = preds_by_class.get(class_id, [])
+        preds_with_idx = preds_by_class_with_idx.get(class_id, [])
 
         # Count how many GT boxes we have for this class (over all images).
         num_gt = sum(len(v) for v in gt_dict.values())
-        if num_gt == 0 and not preds:
+        if num_gt == 0 and not preds_with_idx:
             print(f"  Class {class_id}: no GT and no predictions, skipping.")
             continue
 
         print(
             f"  Class {class_id}: {num_gt} GT boxes, "
-            f"{len(preds)} predictions before matching."
+            f"{len(preds_with_idx)} predictions before matching."
         )
 
         # For each image, keep track of which GT boxes have already been
@@ -137,14 +231,15 @@ def build_linear_probe_dataset_for_split(
             for img_id, boxes in gt_dict.items()
         }
 
-        # Sort predictions by descending score, as in standard detection eval.
-        preds_sorted = sorted(preds, key=lambda x: x[2], reverse=True)
+        # Sort predictions by descending score for greedy TP/FP matching
+        # Each prediction is: (img_id, line_idx, box_xyxy, score)
+        preds_sorted = sorted(preds_with_idx, key=lambda x: x[3], reverse=True)
 
         num_pos = 0  # number of true positives for this class
         num_neg = 0  # number of false positives for this class
 
         # Iterate over predictions from highest to lowest score.
-        for img_id, box_pred, score in preds_sorted:
+        for img_id, line_idx, box_pred, score in preds_sorted:
             gt_boxes = gt_dict.get(img_id)
             if gt_boxes is None or gt_boxes.size == 0:
                 # No GT boxes for this image and class: prediction is a FP.
@@ -165,14 +260,29 @@ def build_linear_probe_dataset_for_split(
                     # in both cases, this prediction is treated as a FP.
                     target = 0
 
-            # Compute the feature vector for this prediction (box + score).
-            feats = _box_features_xyxy(box_pred, score)
+            # Get feature directly using line_idx (perfect 1:1 alignment)
+            # Features are aligned by index: features[i] corresponds to line i in .txt file
+            img_features = feature_cache.get(img_id)
+            if img_features is None:
+                # Track this for reporting at end
+                missing_features_images.add(img_id)
+                continue
+            
+            if line_idx >= len(img_features):
+                raise IndexError(
+                    f"Image {img_id}: line_idx {line_idx} out of bounds (features has {len(img_features)} entries). "
+                    f"This indicates .txt/.npz misalignment - check that files were generated together."
+                )
+            
+            # Direct lookup: feature for this prediction is at features[line_idx]
+            feats = img_features[line_idx].astype(np.float32)  # (257,)
 
             # Append features and corresponding target (0/1) and class id.
             all_features.append(feats)
             all_targets.append(int(target))
             all_class_ids.append(int(class_id))
-
+            
+            # Update counters
             if target == 1:
                 num_pos += 1
             else:
@@ -184,11 +294,20 @@ def build_linear_probe_dataset_for_split(
             f"(pos ratio: {num_pos / max(num_pos + num_neg, 1):.3f})"
         )
 
+    # CRITICAL: Check if any images had missing features
+    # Building a dataset with missing features would silently bias training
+    if missing_features_images:
+        raise FileNotFoundError(
+            f"Cannot build linear probe dataset: {len(missing_features_images)} images have predictions but no features. "\
+            f"Affected images (showing first 10): {sorted(list(missing_features_images))[:10]}. "\
+            f"Please run 'run_sam3_on_split.py' for split='{split}' to generate features for all images."\
+        )
+    
     # If no predictions survived the confidence threshold, we cannot build a dataset.
     if not all_features:
         raise RuntimeError(
-            f"No predictions found above threshold {confidence_threshold} "
-            f"for split '{split}'. Cannot build linear-probe dataset."
+            f"No predictions found above threshold {confidence_threshold} "\
+            f"for split '{split}'. Cannot build linear-probe dataset."\
         )
 
     # Stack and convert lists to final NumPy arrays.

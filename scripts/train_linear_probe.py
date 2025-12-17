@@ -160,6 +160,13 @@ def train_linear_probe(
     print(f"  Num epochs:      {num_epochs}")
     print(f"  Learning rate:   {learning_rate}")
     print(f"  L2 weight:       {l2_weight}")
+    
+    # Sanity check: features should be 257-d (256-d query embeddings + 1-d score)
+    if feature_dim != 257:
+        print(
+            f"\n  WARNING: Expected feature_dim=257 (256-d query + score), got {feature_dim}. "
+            f"This may indicate old geometric features or a pipeline mismatch."
+        )
 
     # Storage for class-wise weights and biases
     all_weights = np.zeros((num_classes, feature_dim), dtype=np.float32)
