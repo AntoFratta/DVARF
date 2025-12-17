@@ -56,25 +56,41 @@ class Sam3ImageModel:
         # These embeddings contain semantic information about the detected objects
         # and their compatibility with the text prompt.
         # Shape: (num_queries, 256)
+        #
+        # NOTE: When using Sam3Processor, the decoder outputs (including queries)
+        # are exposed inside `output["backbone_out"]`, not necessarily at the top level.
         query_features = output.get("queries", None)
-        
+
+        if query_features is None:
+            backbone_out = output.get("backbone_out", None)
+            if isinstance(backbone_out, dict):
+                query_features = backbone_out.get("queries", None)
+
         # CRITICAL: Queries are REQUIRED for the linear probe pipeline
         if query_features is None:
             raise RuntimeError(
-                f"SAM3 did not return 'queries' in output for image {image_path}. "
+                f"SAM3 did not expose query embeddings ('queries') for image {image_path}. "
                 f"The linear probe requires semantic features (query embeddings). "
-                f"This may indicate: 1) SAM3 version mismatch, 2) Model not properly loaded, "
-                f"or 3) No detections found. Output keys: {list(output.keys())}"
+                f"Expected either output['queries'] or output['backbone_out']['queries']. "
+                f"Output keys: {list(output.keys())}"
             )
-        
-        # Validate that queries align with boxes
+
+        # If the model returns a batch dimension (1, N, 256), remove it.
+        if hasattr(query_features, "ndim") and query_features.ndim == 3 and query_features.shape[0] == 1:
+            query_features = query_features[0]
+
+        # Validate that queries align with boxes.
+        # In this project we assume a strict 1:1 alignment between:
+        # - the i-th detection box written to the YOLO file
+        # - the i-th embedding saved to the .npz features file
         num_queries = query_features.shape[0] if hasattr(query_features, "shape") else len(query_features)
         num_boxes = output["boxes"].shape[0] if hasattr(output["boxes"], "shape") else len(output["boxes"])
-        
+
         if num_queries != num_boxes:
             raise RuntimeError(
                 f"SAM3 queries/boxes length mismatch: {num_queries} queries but {num_boxes} boxes. "
-                f"Cannot guarantee feature alignment. This indicates a bug in SAM3 output."
+                f"Cannot guarantee feature alignment. This may indicate that the processor returns "
+                f"query embeddings for a different set (e.g., internal queries) than the final boxes."
             )
 
         return Sam3Prediction(
