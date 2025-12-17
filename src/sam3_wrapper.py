@@ -35,7 +35,8 @@ class Sam3ImageModel:
 
     def __init__(self) -> None:
         """Build the SAM 3 image model and its processor."""
-        self.model = build_sam3_image_model()
+        # Explicitly load from HuggingFace to avoid bpe_path issues
+        self.model = build_sam3_image_model(load_from_HF=True)
         self.processor = Sam3Processor(self.model)
 
     def predict_with_text(self, image_path: PathLike, prompt: str) -> Sam3Prediction:
