@@ -58,16 +58,24 @@ class Sam3ImageModel:
         # Shape: (num_queries, 256)
         query_features = output.get("queries", None)
         
-        # CRITICAL: Validate that queries align with boxes
-        if query_features is not None:
-            num_queries = query_features.shape[0] if hasattr(query_features, "shape") else len(query_features)
-            num_boxes = output["boxes"].shape[0] if hasattr(output["boxes"], "shape") else len(output["boxes"])
-            
-            if num_queries != num_boxes:
-                raise RuntimeError(
-                    f"SAM3 queries/boxes length mismatch: {num_queries} queries but {num_boxes} boxes. "
-                    f"Cannot guarantee feature alignment. This indicates a bug in SAM3 output."
-                )
+        # CRITICAL: Queries are REQUIRED for the linear probe pipeline
+        if query_features is None:
+            raise RuntimeError(
+                f"SAM3 did not return 'queries' in output for image {image_path}. "
+                f"The linear probe requires semantic features (query embeddings). "
+                f"This may indicate: 1) SAM3 version mismatch, 2) Model not properly loaded, "
+                f"or 3) No detections found. Output keys: {list(output.keys())}"
+            )
+        
+        # Validate that queries align with boxes
+        num_queries = query_features.shape[0] if hasattr(query_features, "shape") else len(query_features)
+        num_boxes = output["boxes"].shape[0] if hasattr(output["boxes"], "shape") else len(output["boxes"])
+        
+        if num_queries != num_boxes:
+            raise RuntimeError(
+                f"SAM3 queries/boxes length mismatch: {num_queries} queries but {num_boxes} boxes. "
+                f"Cannot guarantee feature alignment. This indicates a bug in SAM3 output."
+            )
 
         return Sam3Prediction(
             masks=output["masks"],
