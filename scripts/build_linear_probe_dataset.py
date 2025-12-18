@@ -124,7 +124,7 @@ def _load_predictions_with_line_indices(
                     continue
                 
                 # Convert to xyxy for IoU computation
-                box_xyxy = _yolo_to_xyxy(np.array([cx, cy, w, h], dtype=np.float32))
+                box_xyxy = _yolo_to_xyxy(cx, cy, w, h)
                 
                 # Store: (img_id, line_idx, box_xyxy, score)
                 preds_by_class[class_id].append((img_id, line_idx, box_xyxy, score))
