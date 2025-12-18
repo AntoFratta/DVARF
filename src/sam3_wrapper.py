@@ -29,7 +29,7 @@ class Sam3Prediction:
     masks: Any      # usually a tensor of shape [N, 1, H, W]
     boxes: Any      # usually a tensor of shape [N, 4] in pixel coordinates
     scores: Any     # usually a tensor of shape [N]
-    features: Any   # per-box semantic embeddings (N, 256) aligned to final boxes
+    features: Any   # per-box semantic features (N, 256)
 
 
 class Sam3ImageModel:
@@ -38,73 +38,85 @@ class Sam3ImageModel:
     def __init__(self) -> None:
         """Build the SAM 3 image model and its processor."""
         # Explicitly load from HuggingFace to avoid bpe_path issues
-        self.model = build_sam3_image_model(load_from_HF=True)
+        # NOTE: We also pass bpe_path explicitly to be robust in Colab/runtime environments.
+        import sam3  # local import to avoid issues before dependencies are ready
+        bpe_path = str(Path(sam3.__file__).resolve().parent / "assets" / "bpe_simple_vocab_16e6.txt.gz")
+
+        self.model = build_sam3_image_model(load_from_HF=True, bpe_path=bpe_path)
         self.processor = Sam3Processor(self.model)
 
     @staticmethod
-    def _extract_last_stage_out(model_forward_output: Any) -> Optional[Dict[str, Any]]:
+    def _pick_feature_map(backbone_out: Dict[str, Any]) -> torch.Tensor:
         """
-        SAM3Image.forward(...) returns a nested structure like:
-          previous_stages_out = [ [stage0_out, stage1_out, ...] ]  # 1 frame
-        We want the last stage dict.
+        Pick a reasonable vision feature map for ROI pooling.
+        Priority:
+          1) backbone_fpn[0] (highest resolution pyramid feature)
+          2) vision_features
+          3) sam2_backbone_out (if tensor-like)
+        Returns a tensor shaped [1, C, H, W].
         """
-        out = model_forward_output
+        cand = None
 
-        # Typical: list (frames) -> list (stages) -> dict
-        if isinstance(out, list) and out:
-            if isinstance(out[0], list) and out[0]:
-                last = out[0][-1]
-                return last if isinstance(last, dict) else None
-            # Sometimes might be list of dicts
-            if isinstance(out[-1], dict):
-                return out[-1]
+        if isinstance(backbone_out.get("backbone_fpn", None), (list, tuple)) and backbone_out["backbone_fpn"]:
+            cand = backbone_out["backbone_fpn"][0]
+        elif isinstance(backbone_out.get("vision_features", None), (list, tuple)) and backbone_out["vision_features"]:
+            cand = backbone_out["vision_features"][0]
+        elif isinstance(backbone_out.get("vision_features", None), torch.Tensor):
+            cand = backbone_out["vision_features"]
+        elif isinstance(backbone_out.get("sam2_backbone_out", None), torch.Tensor):
+            cand = backbone_out["sam2_backbone_out"]
 
-        # Already a dict
-        if isinstance(out, dict):
-            return out
-
-        return None
-
-    @staticmethod
-    def _boxes_xyxy_norm_to_pixels(boxes_xyxy_norm: torch.Tensor, w: int, h: int) -> torch.Tensor:
-        """
-        Convert normalized [0..1] XYXY boxes to pixel XYXY.
-        boxes_xyxy_norm: (Q, 4)
-        """
-        scale = torch.tensor([w, h, w, h], device=boxes_xyxy_norm.device, dtype=boxes_xyxy_norm.dtype)
-        return boxes_xyxy_norm * scale
-
-    @staticmethod
-    def _match_boxes_to_queries(
-        final_boxes_xyxy_px: torch.Tensor,
-        raw_boxes_xyxy_px: torch.Tensor,
-        match_threshold_px: float = 5.0,
-    ) -> torch.Tensor:
-        """
-        Match each final box (from processor) to the closest raw per-query box (from model).
-        Returns indices into raw_boxes (and thus into raw queries).
-        """
-        if final_boxes_xyxy_px.numel() == 0:
-            return torch.empty((0,), dtype=torch.long, device=raw_boxes_xyxy_px.device)
-
-        # Pairwise L2 distances: (N, Q)
-        # final: (N,4), raw:(Q,4)
-        diff = final_boxes_xyxy_px[:, None, :] - raw_boxes_xyxy_px[None, :, :]
-        dists = torch.sqrt((diff * diff).sum(dim=-1))  # (N, Q)
-
-        nn_idx = torch.argmin(dists, dim=1)           # (N,)
-        nn_dist = dists[torch.arange(dists.size(0), device=dists.device), nn_idx]
-
-        # If any match is too far, better to fail loudly: alignment would be wrong.
-        if torch.any(nn_dist > match_threshold_px):
-            bad = torch.nonzero(nn_dist > match_threshold_px).flatten().tolist()
+        if cand is None or not isinstance(cand, torch.Tensor):
             raise RuntimeError(
-                f"SAM3 feature alignment failed: {len(bad)} boxes could not be matched "
-                f"within {match_threshold_px}px. Bad indices: {bad[:10]}. "
-                f"Try increasing match_threshold_px or inspect box scaling."
+                "Could not find a usable vision feature map inside output['backbone_out']. "
+                f"Available keys: {list(backbone_out.keys())}"
             )
 
-        return nn_idx
+        # Normalize shape to [1, C, H, W]
+        if cand.ndim == 3:
+            cand = cand.unsqueeze(0)
+        elif cand.ndim != 4:
+            raise RuntimeError(f"Unexpected feature map shape {tuple(cand.shape)}; expected 3D or 4D tensor.")
+
+        return cand
+
+    @staticmethod
+    def _prompt_vector(backbone_out: Dict[str, Any], device: torch.device, dtype: torch.dtype) -> torch.Tensor:
+        """
+        Build a 256-d prompt-conditioned vector from language embeddings.
+        We use mean pooling across tokens and broadcast it to boxes.
+        """
+        lang = backbone_out.get("language_embeds", None)
+        if not isinstance(lang, torch.Tensor):
+            # Fallback: zero vector (still works, just less prompt-conditioned)
+            return torch.zeros((256,), device=device, dtype=dtype)
+
+        # lang can be [1, T, 256] or [T, 256] or [256]
+        if lang.ndim == 3 and lang.shape[0] == 1:
+            lang = lang[0]  # [T, 256]
+        if lang.ndim == 2:
+            vec = lang.mean(dim=0)  # [256]
+        elif lang.ndim == 1:
+            vec = lang
+        else:
+            raise RuntimeError(f"Unexpected language_embeds shape {tuple(lang.shape)}")
+
+        return vec.to(device=device, dtype=dtype)
+
+    @staticmethod
+    def _ensure_boxes_pixels(boxes: torch.Tensor, orig_w: int, orig_h: int) -> torch.Tensor:
+        """
+        Ensure boxes are in pixel XYXY.
+        If boxes look normalized (max <= ~1.5), scale to pixels.
+        """
+        if boxes.numel() == 0:
+            return boxes
+
+        mx = float(boxes.max().detach().cpu().item())
+        if mx <= 1.5:
+            scale = boxes.new_tensor([orig_w, orig_h, orig_w, orig_h])
+            return boxes * scale
+        return boxes
 
     def predict_with_text(self, image_path: PathLike, prompt: str) -> Sam3Prediction:
         """
@@ -113,28 +125,13 @@ class Sam3ImageModel:
         image_path = Path(image_path)
         image = Image.open(image_path).convert("RGB")
 
-        # Enable with: export SAM3_DEBUG=1
         debug = os.environ.get("SAM3_DEBUG", "0") == "1"
 
-        # We need semantic embeddings for the linear probe.
-        # Sam3Processor does NOT expose 'queries' in its output dict in the current SAM3 version.
-        # Solution: capture the raw model forward output via a forward hook, then align queries
-        # to the final boxes returned by the processor.
-        captured: Dict[str, Any] = {"raw_out": None}
-
-        def _forward_hook(_module, _inputs, output):
-            captured["raw_out"] = self._extract_last_stage_out(output)
-
-        hook_handle = self.model.register_forward_hook(_forward_hook)
-
-        try:
-            state = self.processor.set_image(image)
-            output: Dict[str, Any] = self.processor.set_text_prompt(
-                state=state,
-                prompt=prompt,
-            )
-        finally:
-            hook_handle.remove()
+        state = self.processor.set_image(image)
+        output: Dict[str, Any] = self.processor.set_text_prompt(
+            state=state,
+            prompt=prompt,
+        )
 
         if debug:
             print("TOP KEYS:", list(output.keys()))
@@ -145,43 +142,14 @@ class Sam3ImageModel:
             if "boxes" in output and hasattr(output["boxes"], "shape"):
                 print("boxes shape:", output["boxes"].shape)
 
-        raw_out = captured.get("raw_out", None)
-        if raw_out is None:
-            raise RuntimeError(
-                "Could not capture raw SAM3 model output via forward hook. "
-                "This indicates the processor did not execute the model forward pass as expected."
-            )
-
-        # Raw per-query embeddings from the last decoder layer (semantic features).
-        query_features = raw_out.get("queries", None)
-        if query_features is None:
-            raise RuntimeError(
-                f"Raw model output did not contain 'queries'. Raw keys: {list(raw_out.keys())}"
-            )
-
-        # query_features shape typically: (B, Q, 256) or (Q, 256)
-        if hasattr(query_features, "ndim") and query_features.ndim == 3:
-            # Use batch 0 (we run single-image inference)
-            query_features = query_features[0]
-
-        # Raw predicted boxes per query (normalized xyxy in [0..1]) to match features.
-        raw_boxes_xyxy = raw_out.get("pred_boxes_xyxy", None)
-        if raw_boxes_xyxy is None:
-            raise RuntimeError(
-                f"Raw model output did not contain 'pred_boxes_xyxy'. Raw keys: {list(raw_out.keys())}"
-            )
-
-        if hasattr(raw_boxes_xyxy, "ndim") and raw_boxes_xyxy.ndim == 3:
-            raw_boxes_xyxy = raw_boxes_xyxy[0]  # (Q, 4)
-
-        # Final boxes returned by the processor are in pixel coordinates (XYXY).
+        # Get final predictions
+        final_masks = output["masks"]
         final_boxes = output["boxes"]
         final_scores = output["scores"]
-        final_masks = output["masks"]
 
-        # If no detections, return empty aligned features.
+        # If no detections, return empty features.
         if hasattr(final_boxes, "shape") and final_boxes.shape[0] == 0:
-            empty_feats = query_features[:0]  # (0, 256)
+            empty_feats = torch.empty((0, 256), device=final_scores.device, dtype=final_scores.dtype)
             return Sam3Prediction(
                 masks=final_masks,
                 boxes=final_boxes,
@@ -189,31 +157,61 @@ class Sam3ImageModel:
                 features=empty_feats,
             )
 
-        # Convert raw boxes to pixels using original image size from processor output.
+        # Build per-box semantic features via ROI pooling on a backbone feature map,
+        # then condition them on the prompt using language_embeds.
+        backbone_out = output.get("backbone_out", None)
+        if not isinstance(backbone_out, dict):
+            raise RuntimeError("SAM3 output does not contain 'backbone_out' dict; cannot extract features.")
+
+        feat_map = self._pick_feature_map(backbone_out)  # [1, C, Hf, Wf]
+        feat_map = feat_map.to(device=final_boxes.device)
+
         orig_h = int(output["original_height"])
         orig_w = int(output["original_width"])
-        raw_boxes_px = self._boxes_xyxy_norm_to_pixels(raw_boxes_xyxy, orig_w, orig_h).to(final_boxes.device)
 
-        # Match final boxes to raw queries by nearest raw box.
-        matched_idx = self._match_boxes_to_queries(
-            final_boxes_xyxy_px=final_boxes,
-            raw_boxes_xyxy_px=raw_boxes_px,
-            match_threshold_px=5.0,
-        )
+        boxes_px = self._ensure_boxes_pixels(final_boxes, orig_w, orig_h)
 
-        # Aligned semantic embeddings for each final detection box.
-        aligned_features = query_features.to(final_boxes.device)[matched_idx]
+        # ROIAlign expects boxes with batch indices: (N, 5) -> [batch_idx, x1, y1, x2, y2]
+        n = boxes_px.shape[0]
+        batch_idx = torch.zeros((n, 1), device=boxes_px.device, dtype=boxes_px.dtype)
+        rois = torch.cat([batch_idx, boxes_px], dim=1)
 
-        # Final sanity check: strict 1:1 alignment
-        if aligned_features.shape[0] != final_boxes.shape[0]:
+        # Compute spatial_scale: feature_map pixels per input pixel
+        # Usually Hf/H == Wf/W; use width-based scale.
+        spatial_scale = feat_map.shape[-1] / float(orig_w)
+
+        try:
+            from torchvision.ops import roi_align
+        except Exception as e:
             raise RuntimeError(
-                f"Internal alignment error: features N={aligned_features.shape[0]} "
-                f"but boxes N={final_boxes.shape[0]}."
+                "torchvision.ops.roi_align is required to extract per-box features. "
+                "Ensure torchvision is installed and compatible with your torch build."
+            ) from e
+
+        # Pool to 1x1 per ROI -> [N, C, 1, 1] -> [N, C]
+        pooled = roi_align(
+            input=feat_map,
+            boxes=rois,
+            output_size=(1, 1),
+            spatial_scale=spatial_scale,
+            sampling_ratio=-1,
+            aligned=True,
+        ).flatten(1)
+
+        # Prompt conditioning: add mean-pooled language embedding (256-d) to each ROI feature
+        prompt_vec = self._prompt_vector(backbone_out, device=pooled.device, dtype=pooled.dtype)
+        if pooled.shape[1] != prompt_vec.shape[0]:
+            # If C != 256, we can't keep 256-d features. Fail loudly (avoids silent bugs).
+            raise RuntimeError(
+                f"Feature map channel dim C={pooled.shape[1]} does not match prompt dim {prompt_vec.shape[0]}. "
+                "Pick a different feature map (expected C=256) or change downstream feature_dim."
             )
+
+        features = pooled + prompt_vec.unsqueeze(0)  # [N, 256]
 
         return Sam3Prediction(
             masks=final_masks,
             boxes=final_boxes,
             scores=final_scores,
-            features=aligned_features,
+            features=features,
         )
