@@ -37,13 +37,26 @@ import numpy as np
 # Add project root to PYTHONPATH
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
-    sys.path.append(str(PROJECT_ROOT))
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.config import (  # noqa: E402
     get_sam3_yolo_predictions_dir,
     PREDICTIONS_DIR,
 )
 from src.prompts import CLASS_PROMPTS  # noqa: E402
+
+
+def _sort_key(p: Path):
+    """
+    Safe sorting key that tries numeric sorting first, falls back to lexicographic.
+    
+    This prevents crashes when file stems are not purely numeric (e.g., 'img_559')
+    while maintaining numeric sorting when possible (e.g., '100' comes after '99').
+    """
+    try:
+        return int(p.stem)
+    except ValueError:
+        return p.stem
 
 
 def _load_features_for_image(
@@ -142,10 +155,10 @@ def apply_linear_probe_to_split(
     print(f"  Num classes:            {num_classes}")
     print(f"  Feature dimension:      {feature_dim}")
 
-    # Collect all YOLO prediction files, assuming numeric stems (e.g. "0001.txt").
+    # Collect all YOLO prediction files, sorted safely (numeric when possible).
     pred_files: List[Path] = sorted(
         in_dir.glob("*.txt"),
-        key=lambda p: int(p.stem),
+        key=_sort_key,
     )
     if not pred_files:
         raise RuntimeError(f"No prediction files found in {in_dir}")

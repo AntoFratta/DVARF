@@ -24,7 +24,7 @@ import numpy as np
 # Add project root to PYTHONPATH so that "src" can be imported when running as a script.
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
-    sys.path.append(str(PROJECT_ROOT))
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.config import get_labels_dir, get_sam3_yolo_predictions_dir  # noqa: E402
 from src.prompts import CLASS_PROMPTS  # noqa: E402
@@ -32,6 +32,19 @@ from src.eval_yolo import (  # noqa: E402
     _load_yolo_dataset,
     _compute_iou,
 )
+
+
+def _sort_key(p: Path):
+    """
+    Safe sorting key that tries numeric sorting first, falls back to lexicographic.
+    
+    This prevents crashes when file stems are not purely numeric (e.g., 'img_559')
+    while maintaining numeric sorting when possible (e.g., '100' comes after '99').
+    """
+    try:
+        return int(p.stem)
+    except ValueError:
+        return p.stem
 
 
 def _load_features_for_image(
@@ -61,7 +74,7 @@ def _load_features_for_image(
 def _load_predictions_with_line_indices(
     preds_dir: Path,
     num_classes: int,
-    confidence_threshold: float = 0.0,
+    confidence_threshold: float = 0.26,
 ) -> Dict[int, List[Tuple[str, int, np.ndarray, float]]]:
     """
     Load YOLO predictions from .txt files, preserving line order.
@@ -85,7 +98,7 @@ def _load_predictions_with_line_indices(
     }
     
     # Get all prediction files
-    pred_files = sorted(preds_dir.glob("*.txt"), key=lambda p: p.stem)
+    pred_files = sorted(preds_dir.glob("*.txt"), key=_sort_key)
     
     for pred_file in pred_files:
         img_id = pred_file.stem
