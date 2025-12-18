@@ -12,7 +12,7 @@ from typing import Dict
 # 2: car
 
 CLASS_PROMPTS: Dict[int, str] = {
-    0: "crashed car on the road",
-    1: "person at the accident scene",
-    2: "undamaged car or parked car",
+    0: "crashed car",
+    1: "person",
+    2: "car",
 }
