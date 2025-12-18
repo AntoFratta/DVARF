@@ -35,14 +35,19 @@ class Sam3Prediction:
 class Sam3ImageModel:
     """Wrapper for single-image inference with a text prompt."""
 
-    def __init__(self) -> None:
+    def __init__(self, checkpoint_path: Optional[str] = None) -> None:
         """Build the SAM 3 image model and its processor."""
         # Explicitly load from HuggingFace to avoid bpe_path issues
         # NOTE: We also pass bpe_path explicitly to be robust in Colab/runtime environments.
         import sam3  # local import to avoid issues before dependencies are ready
         bpe_path = str(Path(sam3.__file__).resolve().parent / "assets" / "bpe_simple_vocab_16e6.txt.gz")
 
-        self.model = build_sam3_image_model(load_from_HF=True, bpe_path=bpe_path)
+        if checkpoint_path is not None:
+            # Load from explicit checkpoint path
+            self.model = build_sam3_image_model(checkpoint_path=checkpoint_path, bpe_path=bpe_path)
+        else:
+            # Load from HuggingFace
+            self.model = build_sam3_image_model(load_from_HF=True, bpe_path=bpe_path)
         self.processor = Sam3Processor(self.model)
 
     @staticmethod
