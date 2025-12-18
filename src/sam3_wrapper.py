@@ -8,6 +8,7 @@ repository. This makes the code easier to maintain and test.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Union
@@ -52,13 +53,27 @@ class Sam3ImageModel:
             prompt=prompt,
         )
 
+        # Debug utility: print output structure and shapes to understand
+        # where query embeddings are exposed by the processor.
+        # Enable with: export SAM3_DEBUG=1
+        if os.environ.get("SAM3_DEBUG", "0") == "1":
+            print("TOP KEYS:", list(output.keys()))
+            bo = output.get("backbone_out", None)
+            print("backbone_out type:", type(bo))
+            if isinstance(bo, dict):
+                print("BACKBONE_OUT KEYS:", list(bo.keys()))
+                if "queries" in bo and hasattr(bo["queries"], "shape"):
+                    print("backbone_out['queries'] shape:", bo["queries"].shape)
+            if "boxes" in output and hasattr(output["boxes"], "shape"):
+                print("boxes shape:", output["boxes"].shape)
+
         # Extract query embeddings (256-d) from last decoder layer.
         # These embeddings contain semantic information about the detected objects
         # and their compatibility with the text prompt.
         # Shape: (num_queries, 256)
         #
         # NOTE: When using Sam3Processor, the decoder outputs (including queries)
-        # are exposed inside `output["backbone_out"]`, not necessarily at the top level.
+        # are often exposed inside `output["backbone_out"]`, not necessarily at the top level.
         query_features = output.get("queries", None)
 
         if query_features is None:
@@ -89,8 +104,8 @@ class Sam3ImageModel:
         if num_queries != num_boxes:
             raise RuntimeError(
                 f"SAM3 queries/boxes length mismatch: {num_queries} queries but {num_boxes} boxes. "
-                f"Cannot guarantee feature alignment. This may indicate that the processor returns "
-                f"query embeddings for a different set (e.g., internal queries) than the final boxes."
+                f"Cannot guarantee feature alignment. "
+                f"(Hint: enable SAM3_DEBUG=1 to inspect output/backbone_out keys.)"
             )
 
         return Sam3Prediction(
