@@ -15,6 +15,7 @@ from typing import Any, Dict, Union, Optional
 
 from PIL import Image
 import torch
+import torch.nn.functional as F  # <-- PATCH: needed for padding prompt vector
 
 from sam3.model_builder import build_sam3_image_model
 from sam3.model.sam3_image_processor import Sam3Processor
@@ -90,21 +91,45 @@ class Sam3ImageModel:
         """
         Build a 256-d prompt-conditioned vector from language embeddings.
         We use mean pooling across tokens and broadcast it to boxes.
+
+        PATCH:
+        - Robust to SAM3 variants where language_embeds can be e.g. (T, 1, 1024).
+        - Strategy:
+          * squeeze singleton dims when present (e.g. (1,T,D) or (T,1,D))
+          * mean-pool across tokens
+          * force final dim to 256 via deterministic truncate/pad
         """
         lang = backbone_out.get("language_embeds", None)
         if not isinstance(lang, torch.Tensor):
             # Fallback: zero vector (still works, just less prompt-conditioned)
             return torch.zeros((256,), device=device, dtype=dtype)
 
-        # lang can be [1, T, 256] or [T, 256] or [256]
+        # Handle common shapes:
+        #   (1, T, D) -> (T, D)
         if lang.ndim == 3 and lang.shape[0] == 1:
-            lang = lang[0]  # [T, 256]
+            lang = lang[0]
+
+        #   (T, 1, D) -> (T, D)
+        if lang.ndim == 3 and lang.shape[1] == 1:
+            lang = lang[:, 0, :]
+
+        # Pool tokens -> vector
+        #   (T, D) -> (D,)
+        #   (D,)   -> (D,)
+        #   other  -> flatten token dims then pool
         if lang.ndim == 2:
-            vec = lang.mean(dim=0)  # [256]
+            vec = lang.mean(dim=0)
         elif lang.ndim == 1:
             vec = lang
         else:
-            raise RuntimeError(f"Unexpected language_embeds shape {tuple(lang.shape)}")
+            vec = lang.reshape(-1, lang.shape[-1]).mean(dim=0)
+
+        # Force to 256-d (truncate / pad)
+        d = int(vec.numel())
+        if d > 256:
+            vec = vec[:256]
+        elif d < 256:
+            vec = F.pad(vec, (0, 256 - d))
 
         return vec.to(device=device, dtype=dtype)
 
