@@ -22,7 +22,7 @@ from PIL import Image
 # Add project root to PYTHONPATH so that "src" can be imported when running as a script.
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
-    sys.path.append(str(PROJECT_ROOT))
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.config import (  # noqa: E402
     get_images_dir,
@@ -38,6 +38,19 @@ from src.yolo_export import (  # noqa: E402
     nms_yolo_boxes,
 )
 from src.segmentation_export import save_sam3_masks_for_image  # noqa: E402
+
+
+def _sort_key(p: Path):
+    """
+    Safe sorting key that tries numeric sorting first, falls back to lexicographic.
+    
+    This prevents crashes when file stems are not purely numeric (e.g., 'img_559')
+    while maintaining numeric sorting when possible (e.g., '100' comes after '99').
+    """
+    try:
+        return int(p.stem)
+    except ValueError:
+        return p.stem
 
 
 def run_sam3_on_split(
@@ -79,10 +92,10 @@ def run_sam3_on_split(
     features_dir = PROJECT_ROOT / "data" / "processed" / "features" / "sam3_prehead" / split
     features_dir.mkdir(parents=True, exist_ok=True)
 
-    # Collect all JPG and PNG images, assuming stems are numeric (e.g., "0001.jpg").
+    # Collect all JPG and PNG images, sorted safely (numeric if possible, lexicographic otherwise).
     image_files = sorted(
         list(images_dir.glob("*.jpg")) + list(images_dir.glob("*.png")),
-        key=lambda p: int(p.stem),
+        key=_sort_key,
     )
     if not image_files:
         # If there are no images, fail fast with a clear error.
