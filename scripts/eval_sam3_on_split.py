@@ -11,18 +11,19 @@ from __future__ import annotations
 
 from pathlib import Path
 import sys
+import argparse
 
 # Add project root to PYTHONPATH so "src" can be imported when running as a script.
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
-    sys.path.append(str(PROJECT_ROOT))
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.config import get_labels_dir, get_sam3_yolo_predictions_dir  # noqa: E402
 from src.prompts import CLASS_PROMPTS  # noqa: E402
 from src.eval_yolo import (  # noqa: E402
     evaluate_yolo_predictions,
     print_evaluation_summary,
-)
+)  # noqa: E402
 
 
 def main() -> None:
@@ -35,15 +36,31 @@ def main() -> None:
     - runs YOLO-style evaluation given GT labels and prediction files,
     - and prints a human-readable summary of per-class and global metrics.
     """
-    # Choose which split to evaluate. Change to "val" or "train" if needed.
-    split = "test"  # change here if you want to evaluate 'val' etc.
+    parser = argparse.ArgumentParser(description="Evaluate SAM3 predictions on a split.")
+    parser.add_argument("--split", type=str, default="test", help="Dataset split to evaluate (train/val/test).")
+    parser.add_argument(
+        "--confidence_threshold", type=float, default=0.26, help="Minimum confidence for predictions."
+    )
+    parser.add_argument(
+        "--mode",
+        type=str,
+        default="baseline",
+        choices=["baseline", "probe"],
+        help="Which predictions to evaluate: 'baseline' (sam3_yolo) or 'probe' (sam3_linear_probe_yolo).",
+    )
+    args = parser.parse_args()
 
-    # Minimum confidence for predictions to be considered in evaluation.
-    confidence_threshold = 0.26
+    split = args.split
+    confidence_threshold = float(args.confidence_threshold)
 
     # Directories containing ground-truth labels and SAM 3 predictions for this split.
     labels_dir = get_labels_dir(split)
-    preds_dir = get_sam3_yolo_predictions_dir(split)
+
+    if args.mode == "baseline":
+        preds_dir = get_sam3_yolo_predictions_dir(split)
+    else:
+        # Keep logic minimal: same as your linear-probe eval script did.
+        preds_dir = PROJECT_ROOT / "data" / "processed" / "predictions" / "sam3_linear_probe_yolo" / split
 
     # Number of classes is derived from the CLASS_PROMPTS mapping.
     num_classes = len(CLASS_PROMPTS)
