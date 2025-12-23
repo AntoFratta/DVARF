@@ -41,7 +41,16 @@ class Sam3ImageModel:
         # Explicitly load from HuggingFace to avoid bpe_path issues
         # NOTE: We also pass bpe_path explicitly to be robust in Colab/runtime environments.
         import sam3  # local import to avoid issues before dependencies are ready
-        bpe_path = str(Path(sam3.__file__).resolve().parent / "assets" / "bpe_simple_vocab_16e6.txt.gz")
+
+        # Robustly locate the sam3 package root:
+        # - prefer __file__ when available
+        # - fallback to __path__ when sam3 is a namespace/edge-case package (e.g., sam3.__file__ is None)
+        if getattr(sam3, "__file__", None):
+            sam3_pkg_root = Path(sam3.__file__).resolve().parent
+        else:
+            sam3_pkg_root = Path(next(iter(sam3.__path__))).resolve()
+
+        bpe_path = str(sam3_pkg_root / "assets" / "bpe_simple_vocab_16e6.txt.gz")
 
         if checkpoint_path is not None:
             # Load from explicit checkpoint path
