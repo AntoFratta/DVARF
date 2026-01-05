@@ -100,13 +100,6 @@ class Sam3ImageModel:
         """
         Build a 256-d prompt-conditioned vector from language embeddings.
         We use mean pooling across tokens and broadcast it to boxes.
-
-        PATCH:
-        - Robust to SAM3 variants where language_embeds can be e.g. (T, 1, 1024).
-        - Strategy:
-          * squeeze singleton dims when present (e.g. (1,T,D) or (T,1,D))
-          * mean-pool across tokens
-          * force final dim to 256 via deterministic truncate/pad
         """
         lang = backbone_out.get("language_embeds", None)
         if not isinstance(lang, torch.Tensor):
