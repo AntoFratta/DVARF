@@ -16,7 +16,9 @@ The core research question is whether modern vision-language models like SAM 3 c
 
 **Segmentation Preservation:** Beyond detection metrics, the project preserves SAM 3's native segmentation outputs as binary masks. This dual-output approach maintains the detailed spatial information that could be valuable for downstream analysis tasks such as damage assessment or scene reconstruction.
 
-**Linear Probing:** To investigate whether SAM 3's performance can be improved with minimal supervision, a lightweight linear classifier is trained on top of the model's outputs. This classifier learns to re-score detections based on simple geometric features (bounding box dimensions, aspect ratios, confidence scores) extracted from the predictions on a small training set. The linear probe provides a low-cost adaptation method that does not require retraining the foundation model itself.
+**Feature Extraction:** The SAM 3 wrapper has been extended to extract semantic features for each detected object. Using ROI pooling on the model's backbone feature maps, a 256-dimensional representation is computed per detection and then conditioned on the text prompt via mean-pooled language embeddings. These semantic features capture both visual characteristics from the backbone and prompt-specific context, providing rich representations for downstream tasks beyond simple bounding boxes and masks.
+
+**Linear Probing:** To investigate whether SAM 3's performance can be improved with minimal supervision, a lightweight linear classifier is trained on top of the model's outputs. This classifier learns to re-score detections based on semantic features extracted from SAM 3's internal representations: a 257-dimensional vector combining the 256-dimensional query embeddings from backbone feature maps (conditioned on the text prompt) with the model's confidence score. The linear probe provides a low-cost adaptation method that does not require retraining the foundation model itself.
 
 ---
 
