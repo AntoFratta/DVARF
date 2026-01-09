@@ -54,3 +54,25 @@ def get_sam3_segmentation_dir(split: str) -> Path:
     """
     split = _check_split(split)
     return SEGMENTATIONS_DIR / "sam3" / split
+
+
+# ==============================================================================
+# Default thresholds and hyperparameters (for reproducibility and consistency)
+# ==============================================================================
+
+# Export threshold: used during prediction export (run_sam3_on_split.py).
+# Should be LOW to keep candidate detections for the linear probe to refine.
+# The linear probe can adjust confidence scores, but only for boxes that were saved.
+EXPORT_THRESHOLD_DEFAULT = 0.05
+
+# Evaluation threshold: used during metric computation (eval_sam3_on_split.py).
+# Should be chosen via threshold sweep on the validation set (see --sweep mode).
+# This is the "operating point" for production inference.
+EVAL_THRESHOLD_DEFAULT = 0.26  # Can be updated after validation sweep
+
+# NMS (Non-Maximum Suppression) parameters
+NMS_IOU_DEFAULT = 0.7       # IoU threshold for NMS (higher = more boxes kept)
+NMS_MAX_DET_DEFAULT = 300   # Maximum detections per image after NMS
+
+# Note: Matching IoU threshold for TP/FP assignment during evaluation is fixed at 0.5
+# in src/eval_yolo.py (evaluate_yolo_predictions function). This is standard for mAP@50.

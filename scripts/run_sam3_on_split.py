@@ -7,11 +7,28 @@ For each image in the chosen split, this script:
 - applies class-wise NMS to reduce duplicate boxes,
 - writes predictions to .txt files (one per image),
 - and optionally saves binary segmentation masks as PNGs.
+
+Usage:
+  # Run on test split with default settings
+  python run_sam3_on_split.py
+  
+  # Run on train split
+  python run_sam3_on_split.py --split train
+  
+  # Custom export threshold (low to keep candidates)
+  python run_sam3_on_split.py --split val --export_threshold 0.10
+  
+  # Limit to first 10 images for testing
+  python run_sam3_on_split.py --split test --max_images 10
+  
+  # Save segmentation masks (useful for qualitative analysis)
+  python run_sam3_on_split.py --split test --save_segmentations
 """
 
 from __future__ import annotations
 
 import sys
+import argparse
 from pathlib import Path
 from time import time
 from typing import Optional, List
@@ -28,6 +45,9 @@ from src.config import (  # noqa: E402
     get_images_dir,
     get_sam3_yolo_predictions_dir,
     get_sam3_segmentation_dir,
+    EXPORT_THRESHOLD_DEFAULT,
+    NMS_IOU_DEFAULT,
+    NMS_MAX_DET_DEFAULT,
 )
 from src.prompts import CLASS_PROMPTS  # noqa: E402
 from src.sam3_wrapper import Sam3ImageModel  # noqa: E402
@@ -55,12 +75,12 @@ def _sort_key(p: Path):
 
 def run_sam3_on_split(
     split: str,
-    score_threshold: float = 0.26,
+    export_threshold: float = EXPORT_THRESHOLD_DEFAULT,
     max_images: Optional[int] = None,
-    save_segmentations: bool = True,
+    save_segmentations: bool = False,
     max_masks_per_image_per_class: Optional[int] = None,
-    nms_iou: float = 0.7,
-    nms_max_det: int = 300,
+    nms_iou: float = NMS_IOU_DEFAULT,
+    nms_max_det: int = NMS_MAX_DET_DEFAULT,
 ) -> None:
     """
     Run SAM 3 on all images of a given split and save YOLO-style predictions
@@ -68,9 +88,14 @@ def run_sam3_on_split(
 
     Args:
         split: Dataset split to process ("train", "val", or "test").
-        score_threshold: Minimum confidence for detections/masks to be exported.
+        export_threshold: Minimum confidence for detections/masks to be EXPORTED.
+                         Should be LOW (e.g., 0.05-0.10) to keep candidate detections
+                         that the linear probe can later refine. The evaluation threshold
+                         (used during metric computation) is separate and chosen via sweep.
+                         Default: EXPORT_THRESHOLD_DEFAULT (0.05)
         max_images: Optional limit on the number of images to process.
         save_segmentations: If True, also export binary segmentation masks as PNG.
+                           Default: False (masks not needed for linear probe experiments).
         max_masks_per_image_per_class: Optional max number of masks saved per image/class.
         nms_iou: IoU threshold used for class-wise NMS.
         nms_max_det: Global cap on the number of boxes kept after NMS per image.
@@ -109,7 +134,7 @@ def run_sam3_on_split(
     print(f"Number of images: {len(image_files)}")
     print(f"Images directory: {images_dir}")
     print(f"Prediction directory: {pred_dir}")
-    print(f"Score threshold (export): {score_threshold}")
+    print(f"Export threshold (for saving candidates): {export_threshold}")
     print(f"NMS: iou={nms_iou}, max_det={nms_max_det}")
     print(f"Features directory: {features_dir}")
     if save_segmentations:
@@ -140,7 +165,7 @@ def run_sam3_on_split(
                 class_id=class_id,
                 image_width=width,
                 image_height=height,
-                score_threshold=score_threshold,
+                score_threshold=export_threshold,
             )
             all_boxes.extend(yolo_boxes)
 
@@ -151,7 +176,7 @@ def run_sam3_on_split(
                     class_id=class_id,
                     image_id=image_id,
                     output_root=segm_dir,
-                    score_threshold=score_threshold,
+                    score_threshold=export_threshold,
                     max_masks=max_masks_per_image_per_class,
                 )
 
@@ -226,26 +251,89 @@ def run_sam3_on_split(
 
 def main() -> None:
     """
-    Entry point for running SAM 3 over a chosen split with default settings.
+    CLI entry point for running SAM 3 over a chosen split.
+    
+    Supports command-line arguments for all major parameters to make the
+    script reproducible and scriptable without modifying code.
     """
-    split = "test"
-    score_threshold = 0.26
-    max_images: Optional[int] = None  # None = process all images in the split.
-    save_segmentations = True         # Set False if segmentation masks are not needed.
-    max_masks_per_image_per_class: Optional[int] = None
-
-    # NMS parameters (YOLO-like defaults).
-    nms_iou = 0.7
-    nms_max_det = 300
+    parser = argparse.ArgumentParser(
+        description="Run SAM 3 on a dataset split and export predictions.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Run on test split with defaults
+  python run_sam3_on_split.py
+  
+  # Run on train split
+  python run_sam3_on_split.py --split train
+  
+  # Custom export threshold (keep more candidates)
+  python run_sam3_on_split.py --split val --export_threshold 0.10
+  
+  # Limit to first 10 images for testing
+  python run_sam3_on_split.py --split test --max_images 10
+  
+  # Save segmentation masks (for qualitative analysis)
+  python run_sam3_on_split.py --split test --save_segmentations
+  
+  # Custom NMS parameters
+  python run_sam3_on_split.py --split val --nms_iou 0.6 --nms_max_det 500
+        """
+    )
+    parser.add_argument(
+        "--split",
+        type=str,
+        default="test",
+        choices=["train", "val", "test"],
+        help="Dataset split to process (default: test).",
+    )
+    parser.add_argument(
+        "--export_threshold",
+        type=float,
+        default=EXPORT_THRESHOLD_DEFAULT,
+        help=f"Export threshold for candidate detections (default: {EXPORT_THRESHOLD_DEFAULT}). "
+             "Should be LOW to keep candidates for linear probe.",
+    )
+    parser.add_argument(
+        "--max_images",
+        type=int,
+        default=None,
+        help="Maximum number of images to process (default: all).",
+    )
+    parser.add_argument(
+        "--save_segmentations",
+        action="store_true",
+        help="Save binary segmentation masks as PNG (default: False).",
+    )
+    parser.add_argument(
+        "--max_masks_per_image_per_class",
+        type=int,
+        default=None,
+        help="Maximum number of masks to save per image per class (default: all).",
+    )
+    parser.add_argument(
+        "--nms_iou",
+        type=float,
+        default=NMS_IOU_DEFAULT,
+        help=f"IoU threshold for NMS (default: {NMS_IOU_DEFAULT}).",
+    )
+    parser.add_argument(
+        "--nms_max_det",
+        type=int,
+        default=NMS_MAX_DET_DEFAULT,
+        help=f"Maximum detections per image after NMS (default: {NMS_MAX_DET_DEFAULT}).",
+    )
+    
+    args = parser.parse_args()
 
     run_sam3_on_split(
-        split=split,
-        score_threshold=score_threshold,
-        max_images=max_images,
-        save_segmentations=save_segmentations,
-        max_masks_per_image_per_class=max_masks_per_image_per_class,
-        nms_iou=nms_iou,
-        nms_max_det=nms_max_det,
+        split=args.split,
+        export_threshold=args.export_threshold,
+        max_images=args.max_images,
+        save_segmentations=args.save_segmentations,
+        max_masks_per_image_per_class=args.max_masks_per_image_per_class,
+        nms_iou=args.nms_iou,
+        nms_max_det=args.nms_max_det,
     )
 
 
