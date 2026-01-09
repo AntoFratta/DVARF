@@ -1,0 +1,96 @@
+Evaluating split 'train'
+Labels directory:     /content/DVARF/data/raw/labels/train
+Predictions directory:/content/DVARF/data/processed/predictions/sam3_yolo/train
+Confidence threshold: 0.26
+
+Loaded 4075 ground-truth boxes and 6415 predictions.
+
+Per-class metrics (IoU >= 0.5, fixed score threshold):
+
+  Class 0 (crashed car):
+    GT=1492, Pred=890, TP=652, FP=238
+    P = 0.7326, R = 0.4370, F1 = 0.5474
+    AP@0.50     = 0.4235
+    AP@0.50:0.95 = 0.2842
+
+  Class 1 (person):
+    GT=426, Pred=588, TP=296, FP=292
+    P = 0.5034, R = 0.6948, F1 = 0.5838
+    AP@0.50     = 0.5863
+    AP@0.50:0.95 = 0.2697
+
+  Class 2 (car):
+    GT=2157, Pred=4937, TP=1737, FP=3200
+    P = 0.3518, R = 0.8053, F1 = 0.4897
+    AP@0.50     = 0.3920
+    AP@0.50:0.95 = 0.1575
+
+Global metrics:
+
+  P = 0.4186, R = 0.6589, F1 = 0.5119
+  mAP@0.50     = 0.4672
+  mAP@0.50:0.95 = 0.2371
+Evaluating split 'val'
+Labels directory:     /content/DVARF/data/raw/labels/val
+Predictions directory:/content/DVARF/data/processed/predictions/sam3_yolo/val
+Confidence threshold: 0.26
+
+Loaded 517 ground-truth boxes and 859 predictions.
+
+Per-class metrics (IoU >= 0.5, fixed score threshold):
+
+  Class 0 (crashed car):
+    GT=194, Pred=168, TP=102, FP=66
+    P = 0.6071, R = 0.5258, F1 = 0.5635
+    AP@0.50     = 0.4625
+    AP@0.50:0.95 = 0.2054
+
+  Class 1 (person):
+    GT=63, Pred=85, TP=46, FP=39
+    P = 0.5412, R = 0.7302, F1 = 0.6216
+    AP@0.50     = 0.6278
+    AP@0.50:0.95 = 0.2162
+
+  Class 2 (car):
+    GT=260, Pred=606, TP=220, FP=386
+    P = 0.3630, R = 0.8462, F1 = 0.5081
+    AP@0.50     = 0.4206
+    AP@0.50:0.95 = 0.2086
+
+Global metrics:
+
+  P = 0.4284, R = 0.7118, F1 = 0.5349
+  mAP@0.50     = 0.5036
+  mAP@0.50:0.95 = 0.2101
+Evaluating split 'test'
+Labels directory:     /content/DVARF/data/raw/labels/test
+Predictions directory:/content/DVARF/data/processed/predictions/sam3_yolo/test
+Confidence threshold: 0.26
+
+Loaded 472 ground-truth boxes and 809 predictions.
+
+Per-class metrics (IoU >= 0.5, fixed score threshold):
+
+  Class 0 (crashed car):
+    GT=184, Pred=111, TP=72, FP=39
+    P = 0.6486, R = 0.3913, F1 = 0.4881
+    AP@0.50     = 0.3192
+    AP@0.50:0.95 = 0.1838
+
+  Class 1 (person):
+    GT=32, Pred=57, TP=25, FP=32
+    P = 0.4386, R = 0.7812, F1 = 0.5618
+    AP@0.50     = 0.6906
+    AP@0.50:0.95 = 0.2514
+
+  Class 2 (car):
+    GT=256, Pred=641, TP=220, FP=421
+    P = 0.3432, R = 0.8594, F1 = 0.4905
+    AP@0.50     = 0.3595
+    AP@0.50:0.95 = 0.1449
+
+Global metrics:
+
+  P = 0.3918, R = 0.6716, F1 = 0.4949
+  mAP@0.50     = 0.4565
+  mAP@0.50:0.95 = 0.1934
