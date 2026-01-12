@@ -54,6 +54,45 @@ def _sigmoid(x: np.ndarray) -> np.ndarray:
     return 1.0 / (1.0 + np.exp(-x_clipped))
 
 
+def train_ridge_regression(
+    X: np.ndarray,
+    Y: np.ndarray,
+    l2: float = 1e-3,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Train a Ridge regression model using closed-form solution.
+    
+    Args:
+        X: Input features of shape (N, M)
+        Y: Target values of shape (N, K) where K is output dimension
+        l2: L2 regularization coefficient
+    
+    Returns:
+        Tuple of (weights, bias):
+            - weights: shape (M, K)
+            - bias: shape (K,)
+    """
+    X = X.astype(np.float32)
+    Y = Y.astype(np.float32)
+    
+    # Add bias column (column of ones)
+    ones = np.ones((X.shape[0], 1), dtype=np.float32)
+    Xb = np.concatenate([X, ones], axis=1)  # (N, M+1)
+    
+    # Ridge solution: (X^T X + λI)^-1 X^T Y
+    M1 = Xb.shape[1]
+    A = Xb.T @ Xb
+    I = np.eye(M1, dtype=np.float32)
+    I[-1, -1] = 0.0  # Don't regularize the bias term
+    
+    Wb = np.linalg.solve(A + l2 * I, Xb.T @ Y)  # (M+1, K)
+    
+    W = Wb[:-1, :]  # (M, K)
+    b = Wb[-1, :]   # (K,)
+    
+    return W, b
+
+
 def train_logistic_regression(
     x: np.ndarray,
     y: np.ndarray,
@@ -110,6 +149,7 @@ def train_linear_probe(
     num_epochs: int = 500,
     learning_rate: float = 0.1,
     l2_weight: float = 1e-4,
+    bbox_l2: float = 1e-3,
 ) -> Path:
     """
     Train one logistic regression model per class on the specified split.
@@ -122,7 +162,9 @@ def train_linear_probe(
         learning_rate:
             Learning rate for gradient descent.
         l2_weight:
-            L2 regularization strength.
+            L2 regularization strength for logistic regression.
+        bbox_l2:
+            L2 regularization strength for bbox Ridge regression.
 
     Returns:
         Path to the saved .npz file with all class-wise weights.
@@ -143,11 +185,13 @@ def train_linear_probe(
             f"Please run 'build_linear_probe_dataset.py' first for split='{split}'."
         )
 
-    # Load features, binary targets (TP/FP), and class ids.
+    # Load features, binary targets (TP/FP), class ids, and boxes.
     data = np.load(in_path)
     features = data["features"]          # (N, D)
     targets = data["targets"]            # (N,)
     class_ids = data["class_ids"]        # (N,)
+    pred_boxes = data["pred_boxes"]      # (N, 4) in YOLO format (cx,cy,w,h)
+    gt_boxes = data["gt_boxes"]          # (N, 4) in YOLO format, NaN for negatives
 
     num_samples, feature_dim = features.shape
     num_classes = len(CLASS_PROMPTS)
@@ -168,9 +212,16 @@ def train_linear_probe(
             f"This may indicate old geometric features or a pipeline mismatch."
         )
 
-    # Storage for class-wise weights and biases
+    # Storage for class-wise weights and biases (classification)
     all_weights = np.zeros((num_classes, feature_dim), dtype=np.float32)
     all_biases = np.zeros((num_classes,), dtype=np.float32)
+    
+    # Storage for bbox refinement weights and biases
+    # Input dimension: feature_dim + 4 (features + pred_box)
+    # Output dimension: 4 (dx, dy, dw, dh)
+    bbox_input_dim = feature_dim + 4
+    all_bbox_weights = np.zeros((num_classes, bbox_input_dim, 4), dtype=np.float32)
+    all_bbox_biases = np.zeros((num_classes, 4), dtype=np.float32)
 
     # For reporting purposes: class_id -> (num_pos, num_neg)
     class_stats: Dict[int, Tuple[int, int]] = {}
@@ -192,32 +243,76 @@ def train_linear_probe(
             f"{num_c} samples -> {num_pos} pos, {num_neg} neg"
         )
 
-        # If a class has only positives or only negatives, we cannot train
-        # a meaningful logistic regression model for it.
-        if num_pos == 0 or num_neg == 0:
+        # Determine if we can train logistic regression (need both pos and neg samples)
+        train_cls = not (num_pos == 0 or num_neg == 0)
+        
+        if train_cls:
+            # Train class-specific logistic regression on (x_c, y_c).
+            model = train_logistic_regression(
+                x_c,
+                y_c,
+                num_epochs=num_epochs,
+                learning_rate=learning_rate,
+                l2_weight=l2_weight,
+            )
+
+            all_weights[class_id] = model.weights
+            all_biases[class_id] = model.bias
+
+            # Simple training accuracy at threshold 0.5 (mainly for debugging).
+            logits = x_c @ model.weights + model.bias
+            preds = (logits >= 0.0).astype(np.int64)
+            acc = float(np.mean(preds == y_c))
+            print(f"  Training accuracy (thr=0.5): {acc:.4f}")
+        else:
             print(
                 "  WARNING: class has only one label type (all pos or all neg). "
-                "Skipping training and leaving weights at zero."
+                "Skipping logistic regression, but will attempt bbox regressor if positives available."
             )
-            continue
-
-        # Train class-specific logistic regression on (x_c, y_c).
-        model = train_logistic_regression(
-            x_c,
-            y_c,
-            num_epochs=num_epochs,
-            learning_rate=learning_rate,
-            l2_weight=l2_weight,
-        )
-
-        all_weights[class_id] = model.weights
-        all_biases[class_id] = model.bias
-
-        # Simple training accuracy at threshold 0.5 (mainly for debugging).
-        logits = x_c @ model.weights + model.bias
-        preds = (logits >= 0.0).astype(np.int64)
-        acc = float(np.mean(preds == y_c))
-        print(f"  Training accuracy (thr=0.5): {acc:.4f}")
+        
+        # Train bbox refinement regressor (only on positives)
+        mask_pos = mask & (targets == 1)
+        num_pos_bbox = int(np.sum(mask_pos))
+        
+        if num_pos_bbox > 0:
+            # Get positive samples
+            gt_pos = gt_boxes[mask_pos]      # (num_pos, 4)
+            pred_pos = pred_boxes[mask_pos]  # (num_pos, 4)
+            feats_pos = features[mask_pos]   # (num_pos, D)
+            
+            # Compute bbox deltas (dx, dy, dw, dh) using standard parametrization
+            # Unpack YOLO format: (cx, cy, w, h)
+            pred_cx, pred_cy, pred_w, pred_h = pred_pos[:, 0], pred_pos[:, 1], pred_pos[:, 2], pred_pos[:, 3]
+            gt_cx, gt_cy, gt_w, gt_h = gt_pos[:, 0], gt_pos[:, 1], gt_pos[:, 2], gt_pos[:, 3]
+            
+            # Avoid division by zero or log of zero
+            pred_w = np.maximum(pred_w, 1e-6)
+            pred_h = np.maximum(pred_h, 1e-6)
+            gt_w = np.maximum(gt_w, 1e-6)
+            gt_h = np.maximum(gt_h, 1e-6)
+            
+            dx = (gt_cx - pred_cx) / pred_w
+            dy = (gt_cy - pred_cy) / pred_h
+            dw = np.log(gt_w / pred_w)
+            dh = np.log(gt_h / pred_h)
+            
+            Y_deltas = np.stack([dx, dy, dw, dh], axis=1).astype(np.float32)  # (num_pos, 4)
+            
+            # Input: concatenate features and predicted box
+            X_reg = np.concatenate([feats_pos, pred_pos], axis=1)  # (num_pos, D+4)
+            
+            # Train Ridge regression
+            bbox_w, bbox_b = train_ridge_regression(X_reg, Y_deltas, l2=bbox_l2)
+            
+            all_bbox_weights[class_id] = bbox_w
+            all_bbox_biases[class_id] = bbox_b
+            
+            # Compute training MSE for debugging
+            Y_pred = X_reg @ bbox_w + bbox_b
+            mse = float(np.mean((Y_pred - Y_deltas) ** 2))
+            print(f"  BBox refinement: {num_pos_bbox} positives, training MSE = {mse:.6f}")
+        else:
+            print(f"  BBox refinement: no positives, skipping.")
 
     # Ensure output directory exists.
     out_dir = PROJECT_ROOT / "data" / "processed" / "linear_probe"
@@ -229,6 +324,8 @@ def train_linear_probe(
         out_path,
         weights=all_weights,
         biases=all_biases,
+        bbox_weights=all_bbox_weights,
+        bbox_biases=all_bbox_biases,
     )
 
     print(f"\nSaved linear-probe weights to: {out_path}")
@@ -254,12 +351,14 @@ def main() -> None:
     num_epochs = 500
     learning_rate = 0.1
     l2_weight = 1e-4
+    bbox_l2 = 1e-3
 
     train_linear_probe(
         split=split,
         num_epochs=num_epochs,
         learning_rate=learning_rate,
         l2_weight=l2_weight,
+        bbox_l2=bbox_l2,
     )
 
 

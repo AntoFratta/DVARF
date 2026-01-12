@@ -82,6 +82,11 @@ def _load_predictions_with_line_indices(
     This is different from _load_yolo_dataset which sorts by score.
     We need to preserve the original line order to align with features array.
     
+    Note: Predictions are filtered by confidence_threshold BEFORE matching.
+    This means the classifier and bbox regressor only see examples above this threshold.
+    Consider using a lower threshold (e.g., 0.05) here to maximize training examples,
+    then applying a higher operating threshold during evaluation.
+    
     Args:
         preds_dir: Directory containing prediction .txt files
         num_classes: Number of classes
@@ -132,11 +137,29 @@ def _load_predictions_with_line_indices(
     return preds_by_class
 
 
+def _xyxy_to_yolo(box: np.ndarray) -> np.ndarray:
+    """
+    Convert a box from xyxy normalized format to YOLO format (cx, cy, w, h).
+    
+    Args:
+        box: Array of shape (4,) in xyxy format [x1, y1, x2, y2]
+    
+    Returns:
+        Array of shape (4,) in YOLO format [cx, cy, w, h]
+    """
+    x1, y1, x2, y2 = box.astype(np.float32)
+    cx = (x1 + x2) / 2.0
+    cy = (y1 + y2) / 2.0
+    w = (x2 - x1)
+    h = (y2 - y1)
+    return np.asarray([cx, cy, w, h], dtype=np.float32)
+
+
 
 
 def build_linear_probe_dataset_for_split(
     split: str,
-    confidence_threshold: float = 0.26,
+    confidence_threshold: float = 0.05,
     iou_threshold: float = 0.5,
     features_dir: Optional[Path] = None,
 ) -> Path:
@@ -149,7 +172,8 @@ def build_linear_probe_dataset_for_split(
         confidence_threshold:
             Score threshold applied when loading SAM 3 predictions.
             Only predictions with score >= threshold are considered.
-            This should usually match the threshold used in evaluation.
+            Lower threshold (e.g., 0.05) maximizes training examples for the probe.
+            The operating threshold can be higher during evaluation.
         iou_threshold:
             IoU threshold used to decide if a prediction is TP or FP,
             consistent with the detection evaluation (typically 0.5).
@@ -162,6 +186,8 @@ def build_linear_probe_dataset_for_split(
             - features: float32 array of shape (N, 257) where N=num_predictions
             - targets: int64 array of shape (N,) with values {0, 1}
             - class_ids: int64 array of shape (N,) with class indices
+            - pred_boxes: float32 array of shape (N, 4) with predicted boxes in YOLO format (cx, cy, w, h)
+            - gt_boxes: float32 array of shape (N, 4) with matched GT boxes in YOLO format (NaN for FPs)
     """
     # Get directories for ground-truth labels, SAM 3 predictions, and features.
     labels_dir = get_labels_dir(split)
@@ -214,6 +240,8 @@ def build_linear_probe_dataset_for_split(
     all_features: List[np.ndarray] = []
     all_targets: List[int] = []
     all_class_ids: List[int] = []
+    all_pred_boxes: List[np.ndarray] = []
+    all_gt_boxes: List[np.ndarray] = []
 
     # Track images with missing features for final reporting
     missing_features_images: set[str] = set()
@@ -254,9 +282,14 @@ def build_linear_probe_dataset_for_split(
         # Iterate over predictions from highest to lowest score.
         for img_id, line_idx, box_pred, score in preds_sorted:
             gt_boxes = gt_dict.get(img_id)
+            
+            # Convert predicted box to YOLO format
+            pred_box_yolo = _xyxy_to_yolo(box_pred)
+            
             if gt_boxes is None or gt_boxes.size == 0:
                 # No GT boxes for this image and class: prediction is a FP.
                 target = 0
+                best_idx = None
             else:
                 # Compute IoU with all GT boxes in this image for this class.
                 ious = _compute_iou(box_pred, gt_boxes)
@@ -272,6 +305,7 @@ def build_linear_probe_dataset_for_split(
                     # Either IoU is too low, or the GT box was already claimed:
                     # in both cases, this prediction is treated as a FP.
                     target = 0
+                    best_idx = None
 
             # Get feature directly using line_idx (perfect 1:1 alignment)
             # Features are aligned by index: features[i] corresponds to line i in .txt file
@@ -290,10 +324,19 @@ def build_linear_probe_dataset_for_split(
             # Direct lookup: feature for this prediction is at features[line_idx]
             feats = img_features[line_idx].astype(np.float32)  # (257,)
 
+            # Save GT box (if TP, take matched box; if FP, use NaN)
+            if target == 1:
+                gt_box_xyxy = gt_boxes[best_idx]  # (4,) xyxy normalizzato
+                gt_box_yolo = _xyxy_to_yolo(gt_box_xyxy)
+            else:
+                gt_box_yolo = np.full((4,), np.nan, dtype=np.float32)
+
             # Append features and corresponding target (0/1) and class id.
             all_features.append(feats)
             all_targets.append(int(target))
             all_class_ids.append(int(class_id))
+            all_pred_boxes.append(pred_box_yolo)
+            all_gt_boxes.append(gt_box_yolo)
             
             # Update counters
             if target == 1:
@@ -327,18 +370,22 @@ def build_linear_probe_dataset_for_split(
     features_arr = np.stack(all_features, axis=0).astype(np.float32)
     targets_arr = np.asarray(all_targets, dtype=np.int64)
     class_ids_arr = np.asarray(all_class_ids, dtype=np.int64)
+    pred_boxes_arr = np.stack(all_pred_boxes, axis=0).astype(np.float32)  # (N, 4)
+    gt_boxes_arr = np.stack(all_gt_boxes, axis=0).astype(np.float32)  # (N, 4)
 
     # Create output directory for linear probe datasets if it does not exist.
     out_dir = PROJECT_ROOT / "data" / "processed" / "linear_probe"
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / f"sam3_linear_probe_{split}.npz"
 
-    # Save compressed .npz with features, binary targets and class ids.
+    # Save compressed .npz with features, binary targets, class ids, and boxes.
     np.savez_compressed(
         out_path,
         features=features_arr,
         targets=targets_arr,
         class_ids=class_ids_arr,
+        pred_boxes=pred_boxes_arr,
+        gt_boxes=gt_boxes_arr,
     )
 
     print(f"\nSaved linear-probe dataset to: {out_path}")
@@ -361,7 +408,7 @@ def main() -> None:
     You can manually change the split to 'val' or 'test' if needed.
     """
     split = "train"
-    confidence_threshold = 0.26
+    confidence_threshold = 0.05  # Low threshold to maximize training examples
     iou_threshold = 0.5
 
     build_linear_probe_dataset_for_split(

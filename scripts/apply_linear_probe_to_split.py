@@ -20,9 +20,13 @@ This script:
 
       data/processed/linear_probe/sam3_linear_probe_weights.npz
 
-- Writes new YOLO files, with the SAME boxes but UPDATED scores, to:
+- Writes new YOLO files, with UPDATED boxes (if bbox refinement is enabled) and
+  UPDATED scores, to:
 
       data/processed/predictions/sam3_linear_probe_yolo/<split>/*.txt
+
+- If bbox refinement weights are available, also applies bbox delta corrections
+  and re-runs NMS on the refined boxes.
 
 The updated scores can then be evaluated with `eval_yolo.py` in the same
 way as the original SAM 3 predictions.
@@ -42,8 +46,11 @@ if str(PROJECT_ROOT) not in sys.path:
 from src.config import (  # noqa: E402
     get_sam3_yolo_predictions_dir,
     PREDICTIONS_DIR,
+    NMS_IOU_DEFAULT,
+    NMS_MAX_DET_DEFAULT,
 )
 from src.prompts import CLASS_PROMPTS  # noqa: E402
+from src.yolo_export import YoloBox, nms_yolo_boxes  # noqa: E402
 
 
 def _sort_key(p: Path):
@@ -139,6 +146,17 @@ def apply_linear_probe_to_split(
     weights_data = np.load(weights_path)
     all_weights = weights_data["weights"]  # shape (num_classes, D)
     all_biases = weights_data["biases"]    # shape (num_classes,)
+    
+    # Check if bbox regressor weights are present
+    has_bbox = ("bbox_weights" in weights_data.files) and ("bbox_biases" in weights_data.files)
+    if has_bbox:
+        bbox_W = weights_data["bbox_weights"]  # (C, D+4, 4)
+        bbox_b = weights_data["bbox_biases"]   # (C, 4)
+        print("  BBox refinement: ENABLED (weights found)")
+    else:
+        bbox_W = None
+        bbox_b = None
+        print("  BBox refinement: DISABLED (weights not found)")
 
     num_classes = len(CLASS_PROMPTS)
     if all_weights.shape[0] != num_classes:
@@ -230,6 +248,34 @@ def apply_linear_probe_to_split(
                 # Direct lookup: feature for this prediction is at features[line_idx]
                 feats = feat_data[line_idx].astype(np.float32)  # (257,)
                 
+                # Apply bbox refinement if available
+                if has_bbox:
+                    # Concatenate features + predicted box
+                    x_reg = np.concatenate(
+                        [feats, np.asarray([cx, cy, w, h], dtype=np.float32)],
+                        axis=0
+                    )  # (D+4,)
+                    
+                    # Predict deltas: [dx, dy, dw, dh]
+                    delta = x_reg @ bbox_W[class_id] + bbox_b[class_id]  # (4,)
+                    dx, dy, dw, dh = map(float, delta)
+                    
+                    # Apply deltas to refine box coordinates
+                    # Avoid division/exp instabilities
+                    w_safe = max(w, 1e-6)
+                    h_safe = max(h, 1e-6)
+                    
+                    cx = cx + dx * w_safe
+                    cy = cy + dy * h_safe
+                    w = w_safe * float(np.exp(np.clip(dw, -4.0, 4.0)))
+                    h = h_safe * float(np.exp(np.clip(dh, -4.0, 4.0)))
+                    
+                    # Clamp to valid ranges
+                    cx = float(np.clip(cx, 0.0, 1.0))
+                    cy = float(np.clip(cy, 0.0, 1.0))
+                    w = float(np.clip(w, 1e-6, 1.0))
+                    h = float(np.clip(h, 1e-6, 1.0))
+                
                 # Use the linear probe to compute new score
                 w_c = all_weights[class_id]  # weights for this class (D,)
                 b_c = float(all_biases[class_id])
@@ -240,11 +286,8 @@ def apply_linear_probe_to_split(
                 # Ensure score is in [0, 1]
                 score_new = float(np.clip(score_new, 0.0, 1.0))
 
-                # Same boxes as original, but with updated score from the probe
-                new_line = (
-                    f"{class_id} {cx:.6f} {cy:.6f} {w:.6f} {h:.6f} {score_new:.6f}"
-                )
-                new_lines.append(new_line)
+                # Store refined box and score
+                new_lines.append((class_id, cx, cy, w, h, score_new))
         
         # CRITICAL: Verify that we processed exactly as many lines as we have features
         # This catches cases where .txt and .npz are misaligned (extra features or missing lines)
@@ -255,10 +298,44 @@ def apply_linear_probe_to_split(
                 f"Processed {num_lines_processed} lines but have {len(feat_data)} features. "
                 f"Files may not have been generated together. Please re-run 'run_sam3_on_split.py'."
             )
+        
+        # Apply NMS if bbox refinement was performed (boxes changed)
+        if has_bbox and new_lines:
+            # Convert to YoloBox objects
+            boxes = [
+                YoloBox(
+                    class_id=int(item[0]),
+                    cx=float(item[1]),
+                    cy=float(item[2]),
+                    w=float(item[3]),
+                    h=float(item[4]),
+                    score=float(item[5]),
+                )
+                for item in new_lines
+            ]
+            
+            # Apply NMS
+            boxes = nms_yolo_boxes(
+                boxes,
+                iou_threshold=NMS_IOU_DEFAULT,
+                max_det=NMS_MAX_DET_DEFAULT,
+            )
+            
+            # Convert back to text format
+            final_lines = [
+                f"{box.class_id} {box.cx:.6f} {box.cy:.6f} {box.w:.6f} {box.h:.6f} {box.score:.6f}"
+                for box in boxes
+            ]
+        else:
+            # No bbox refinement: convert tuples to formatted strings
+            final_lines = [
+                f"{item[0]} {item[1]:.6f} {item[2]:.6f} {item[3]:.6f} {item[4]:.6f} {item[5]:.6f}"
+                for item in new_lines
+            ]
 
         # Write updated predictions for this image
         with out_path.open("w", encoding="utf-8") as f_out:
-            for ln in new_lines:
+            for ln in final_lines:
                 f_out.write(ln + "\n")
 
         if idx % 50 == 0 or idx == len(pred_files):
