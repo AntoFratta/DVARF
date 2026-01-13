@@ -149,7 +149,7 @@ def train_linear_probe(
     num_epochs: int = 500,
     learning_rate: float = 0.1,
     l2_weight: float = 1e-4,
-    bbox_l2: float = 1e-3,
+    bbox_l2: float = 1e-2,
 ) -> Path:
     """
     Train one logistic regression model per class on the specified split.
@@ -296,6 +296,12 @@ def train_linear_probe(
             dw = np.log(gt_w / pred_w)
             dh = np.log(gt_h / pred_h)
             
+            # Clamp deltas to reduce outliers and improve stability
+            dx = np.clip(dx, -0.5, 0.5)
+            dy = np.clip(dy, -0.5, 0.5)
+            dw = np.clip(dw, -2.0, 2.0)
+            dh = np.clip(dh, -2.0, 2.0)
+            
             Y_deltas = np.stack([dx, dy, dw, dh], axis=1).astype(np.float32)  # (num_pos, 4)
             
             # Input: concatenate features and predicted box
@@ -351,7 +357,7 @@ def main() -> None:
     num_epochs = 500
     learning_rate = 0.1
     l2_weight = 1e-4
-    bbox_l2 = 1e-3
+    bbox_l2 = 1e-2
 
     train_linear_probe(
         split=split,

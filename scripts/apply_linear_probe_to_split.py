@@ -258,6 +258,9 @@ def apply_linear_probe_to_split(
                     
                     # Predict deltas: [dx, dy, dw, dh]
                     delta = x_reg @ bbox_W[class_id] + bbox_b[class_id]  # (4,)
+                    
+                    # Clamp deltas to reduce outliers (same as training)
+                    delta = np.clip(delta, [-0.5, -0.5, -2.0, -2.0], [0.5, 0.5, 2.0, 2.0])
                     dx, dy, dw, dh = map(float, delta)
                     
                     # Apply deltas to refine box coordinates
