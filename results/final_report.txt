@@ -1,0 +1,16 @@
+=== THRESHOLD SYSTEM ===
+Export threshold (candidate generation): 0.05
+Baseline eval threshold (chosen on VAL by best micro-F1): 0.7
+Probe eval threshold (chosen on VAL by best micro-F1): 0.35
+
+=== NOTE ===
+- Export threshold bassa per non scartare candidati utili al probe.
+- Eval threshold selezionata su validation per definire l’operating point.
+
+=== BASELINE TEST SUMMARY ===
+micro_P=0.4587 micro_R=0.5996 micro_F1=0.5197
+mAP50=0.4439 mAP50_95=0.1793
+
+=== PROBE TEST SUMMARY ===
+micro_P=0.4788 micro_R=0.6695 micro_F1=0.5583
+mAP50=0.5605 mAP50_95=0.2655

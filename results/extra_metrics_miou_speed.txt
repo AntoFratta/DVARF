@@ -1,0 +1,11 @@
+EXTRA METRICS (notebook)
+Timestamp: 2026-02-09T10:35:06.588770
+
+Mean IoU (matched bounding boxes, IoU>=0.5)
+  Baseline (thr=0.7): global_mean_iou=nan
+  Probe    (thr=0.35): global_mean_iou=0.6092
+
+Speed (ms/frame) on TEST
+  Baseline SAM3: 6145.85 ms/frame
+  Apply probe  : 1.64 ms/frame
+  Total pipeline (SAM3+probe): 6147.49 ms/frame
