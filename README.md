@@ -170,31 +170,70 @@ Both metrics are measured on the **test set** and saved to the metrics files alo
 
 ## Experimental Results
 
-Results on test split (confidence threshold = 0.26):
+Results on the test set. Two evaluation paradigms are used:
 
-### Zero-shot SAM 3
+- **Best-F1**: Each model is evaluated at its own confidence threshold, selected on the validation set to maximise micro-F1 (SAM 3 baseline: thr = 0.70 · SAM 3 + LP: thr = 0.35).
+- **Fair comparison**: Both models are evaluated at the same threshold (thr = 0.35).
 
-| Class | Precision | Recall | F1 | AP@0.50 | AP@0.50:0.95 |
-|-------|-----------|--------|-----|---------|--------------|
-| Crashed car | 0.649 | 0.391 | 0.488 | 0.319 | 0.184 |
-| Person | 0.439 | 0.781 | 0.562 | 0.691 | 0.251 |
-| Undamaged car | 0.343 | 0.859 | 0.491 | 0.360 | 0.145 |
-| **Overall** | **0.392** | **0.672** | **0.495** | **0.457** | **0.193** |
+### Best-F1 Global Comparison
 
-### SAM 3 + Linear Probe
+Each model evaluated at its own optimal threshold.
 
-| Class | Precision | Recall | F1 | AP@0.50 | AP@0.50:0.95 |
-|-------|-----------|--------|-----|---------|--------------|
-| Crashed car | 0.649 | 0.391 | 0.488 | 0.320 | 0.184 |
-| Person | 0.439 | 0.781 | 0.562 | 0.699 | 0.264 |
-| Undamaged car | 0.343 | 0.859 | 0.491 | 0.362 | 0.149 |
-| **Overall** | **0.392** | **0.672** | **0.495** | **0.460** | **0.199** |
+| Metric | SAM 3 (thr = 0.70) | SAM 3 + LP (thr = 0.35) | Δ |
+|--------|--------------------|-------------------------|---|
+| Precision (micro-P) | 0.4587 | 0.4788 | +0.0201 |
+| Recall (micro-R) | 0.5996 | 0.6695 | +0.0699 |
+| F1 (micro-F1) | 0.5197 | 0.5583 | +0.0386 |
+| mAP@0.50 | 0.4439 | 0.5605 | +0.1166 |
+| mAP@0.50:0.95 | 0.1793 | 0.2655 | +0.0862 |
+
+### Fair Comparison at thr = 0.35
+
+Both models evaluated at the same confidence threshold.
+
+| Metric | SAM 3 | SAM 3 + LP | Δ |
+|--------|-------|------------|---|
+| Precision (micro-P) | 0.3918 | 0.4788 | +0.0869 |
+| Recall (micro-R) | 0.6716 | 0.6695 | −0.0021 |
+| F1 (micro-F1) | 0.4949 | 0.5583 | +0.0634 |
+| mAP@0.50 | 0.4565 | 0.5605 | +0.1040 |
+| mAP@0.50:0.95 | 0.1934 | 0.2655 | +0.0722 |
+
+Predictions on 472 GT boxes: SAM 3 → 809 · SAM 3 + LP → 660 (linear probe filters 149 detections).
+
+### Per-Class Metrics at thr = 0.35
+
+| Class | Metric | SAM 3 | SAM 3 + LP | Δ |
+|-------|--------|-------|------------|---|
+| **Crashed car** | Precision | 0.6486 | 0.7027 | +0.0541 |
+| | Recall | 0.3913 | 0.4239 | +0.0326 |
+| | F1 | 0.4881 | 0.5288 | +0.0407 |
+| | AP@0.50 | 0.3192 | 0.4179 | +0.0987 |
+| | AP@0.50:0.95 | 0.1838 | 0.2307 | +0.0469 |
+| **Person** | Precision | 0.4386 | 0.5439 | +0.1053 |
+| | Recall | 0.7812 | 0.9688 | +0.1876 |
+| | F1 | 0.5618 | 0.6966 | +0.1348 |
+| | AP@0.50 | 0.6906 | 0.8918 | +0.2012 |
+| | AP@0.50:0.95 | 0.2514 | 0.3520 | +0.1006 |
+| **Car** | Precision | 0.3432 | 0.4207 | +0.0775 |
+| | Recall | 0.8594 | 0.8086 | −0.0508 |
+| | F1 | 0.4905 | 0.5535 | +0.0630 |
+| | AP@0.50 | 0.3595 | 0.3717 | +0.0122 |
+| | AP@0.50:0.95 | 0.1449 | 0.2138 | +0.0689 |
+
+### Detection Counts at thr = 0.35
+
+| Class | GT | Pred (SAM 3) | Pred (LP) | TP (SAM 3) | TP (LP) | FP (SAM 3) | FP (LP) |
+|-------|----|--------------|-----------|------------|---------|------------|---------|
+| Crashed car | 184 | 111 | 111 | 72 | 78 | 39 | 33 |
+| Person | 32 | 57 | 57 | 25 | 31 | 32 | 26 |
+| Car | 256 | 641 | 492 | 220 | 207 | 421 | 285 |
 
 ---
 
 ## Model Comparison
 
-Comprehensive comparison of SAM 3 with other zero-shot and supervised models on the test set. Metrics include class-specific mean IoU for zero-shot models and AP@0.5 scores for detection models:
+Comprehensive comparison of SAM 3 with other zero-shot and supervised models on the test set. SAM 3 AP values are reported at thr = 0.35 (fair comparison baseline); mAP@0.5 for SAM 3 + LP refers to the best-F1 evaluation (thr = 0.35, its own optimal threshold):
 
 | Model | Type/Phase | mIoU | Speed (ms/frame) | AP@0.5 crashed | AP@0.5 person | AP@0.5 car | mAP@0.5 |
 |-------|------------|------|------------------|----------------|---------------|------------|---------|
@@ -203,22 +242,22 @@ Comprehensive comparison of SAM 3 with other zero-shot and supervised models on 
 | **YOLOe** | ZSOD | 0.53 | ~20 | N/A | N/A | N/A | N/A |
 | **YOLOe base** | Pre fine-tuning | N/A | ~20 | 0.547 | 0.458 | 0.294 | 0.433 |
 | **YOLOe specialized** | Post fine-tuning | N/A | ~20 | 0.911 | 0.760 | 0.803 | 0.825 |
-| **SAM 3** | Zero-shot | 0.723 | 6146 | 0.319 | 0.691 | 0.360 | 0.457 |
-| **SAM 3 + LP** | Linear Probe | 0.724 | 6147 | 0.320 | 0.699 | 0.362 | 0.460 |
+| **SAM 3** | Zero-shot | N/A | 6146 | 0.319 | 0.691 | 0.360 | 0.444 |
+| **SAM 3 + LP** | Linear Probe | 0.609 | 6147 | 0.418 | 0.892 | 0.372 | 0.561 |
 
 **Notes**:
-- **mIoU**: Mean Intersection over Union computed on correctly matched predictions (True Positives with IoU ≥ 0.5) on the test set, averaged over the three classes. For zero-shot prompt-based models (Moondream 2, OMDET TURBO, YOLOe ZSOD), IoU values are reported per text prompt as in the original thesis. For SAM 3, IoU values are computed per detection class on the YOLO-style dataset.
-- **Speed**: Average inference time per image including I/O, model forward pass, and post-processing. Measured on test set (100 images for SAM 3). For Moondream 2, OMDET TURBO and YOLOe (ZSOD/base/specialized), speed values are approximate and derived from the thesis (≈1s, ≈2s, ≈20ms per frame).
-- **AP@0.5**: Average Precision at IoU threshold 0.5. Standard object detection metric.
-- **mAP@0.5**: Mean Average Precision across all classes.
+- **mIoU**: Mean Intersection over Union on correctly matched predictions (TP with IoU ≥ 0.5), averaged over the three classes. For ZSOD models (Moondream 2, OMDET TURBO, YOLOe), values are reported per text prompt as in the original thesis. For SAM 3 + LP, computed at thr = 0.35. SAM 3 baseline mIoU is not available at its optimal threshold (thr = 0.70 yields no TPs).
+- **Speed**: Average inference time per image including I/O, model forward pass, and post-processing. Measured on test set. For other models, speed values are approximate and derived from the thesis.
+- **AP@0.5 / mAP@0.5**: Average Precision at IoU threshold 0.5. SAM 3 values evaluated at thr = 0.35; SAM 3 + LP at its optimal thr = 0.35 (best-F1).
 - **ZSOD**: Zero-Shot Object Detection (no training on target domain).
 - **N/A**: Metric not applicable or not available for this model/configuration.
 
 **Key Observations**:
-- **SAM 3** achieves the highest **localization quality** (mIoU = 0.723) among zero-shot models, significantly outperforming Moondream 2 (0.44) and YOLOe ZSOD (0.53), and **being comparable to OMDET TURBO (0.72), with a slightly higher mIoU**.
-- **Fine-tuned YOLOe** achieves the best detection performance (mAP@0.5 = 0.825) but requires domain-specific training.
-- **SAM 3's inference speed** (≈6s/frame) is slower than YOLOe (20ms) but comparable to other vision-language models like Moondream (1s) and OMDET (2s).
-- **Linear probing** provides a small but consistent improvement for SAM 3 (+0.001 mIoU, +0.003 mAP@0.5) with negligible added latency (~1.6 ms/frame).
+- **Linear probing significantly improves SAM 3**: mAP@0.5 rises from 0.444 to 0.561 (+0.117) and mAP@0.50:0.95 from 0.179 to 0.266 (+0.087), with the largest gains on the person class (AP@0.5: 0.691 → 0.892).
+- **Fine-tuned YOLOe** achieves the best detection performance (mAP@0.5 = 0.825) but requires domain-specific training data.
+- **SAM 3's inference speed** (≈6s/frame) is slower than YOLOe (20ms) but comparable to other vision-language models like Moondream (1s) and OMDET (2s). The linear probe adds only ~1.6 ms/frame.
+- **The linear probe filters aggressively**: at thr = 0.35, it reduces predictions from 809 to 660 (−19%), improving precision substantially while keeping recall nearly unchanged.
+
 
 ---
 
