@@ -176,19 +176,19 @@ Results on test split (confidence threshold = 0.26):
 
 | Class | Precision | Recall | F1 | AP@0.50 | AP@0.50:0.95 |
 |-------|-----------|--------|-----|---------|--------------|
-| Crashed car | 0.490 | 0.674 | 0.568 | 0.512 | 0.235 |
-| Person | 0.700 | 0.656 | 0.677 | 0.603 | 0.195 |
-| Undamaged car | 0.380 | 0.074 | 0.124 | 0.061 | 0.042 |
-| **Overall** | **0.493** | **0.348** | **0.408** | **0.392** | **0.157** |
+| Crashed car | 0.649 | 0.391 | 0.488 | 0.319 | 0.184 |
+| Person | 0.439 | 0.781 | 0.562 | 0.691 | 0.251 |
+| Undamaged car | 0.343 | 0.859 | 0.491 | 0.360 | 0.145 |
+| **Overall** | **0.392** | **0.672** | **0.495** | **0.457** | **0.193** |
 
 ### SAM 3 + Linear Probe
 
 | Class | Precision | Recall | F1 | AP@0.50 | AP@0.50:0.95 |
 |-------|-----------|--------|-----|---------|--------------|
-| Crashed car | 0.490 | 0.674 | 0.568 | 0.520 | 0.248 |
-| Person | 0.700 | 0.656 | 0.677 | 0.597 | 0.166 |
-| Undamaged car | 0.439 | 0.070 | 0.121 | 0.065 | 0.034 |
-| **Overall** | **0.503** | **0.345** | **0.410** | **0.394** | **0.149** |
+| Crashed car | 0.649 | 0.391 | 0.488 | 0.320 | 0.184 |
+| Person | 0.439 | 0.781 | 0.562 | 0.699 | 0.264 |
+| Undamaged car | 0.343 | 0.859 | 0.491 | 0.362 | 0.149 |
+| **Overall** | **0.392** | **0.672** | **0.495** | **0.460** | **0.199** |
 
 ---
 
@@ -196,19 +196,18 @@ Results on test split (confidence threshold = 0.26):
 
 Comprehensive comparison of SAM 3 with other zero-shot and supervised models on the test set. Metrics include class-specific mean IoU for zero-shot models and AP@0.5 scores for detection models:
 
-| Model | Type/Phase | Mean IoU crashed car | Mean IoU person | Mean IoU car | mIoU | Speed (ms/frame) | AP@0.5 crashed | AP@0.5 person | AP@0.5 car | mAP@0.5 |
-|-------|------------|----------------------|------------------|---------------|------|------------------|----------------|---------------|------------|---------|
-| **Moondream 2** | ZSOD | 0.42 | 0.47 | 0.43 | 0.44 | ~1000 | N/A | N/A | N/A | N/A |
-| **OMDET TURBO** | ZSOD | 0.65 | 0.77 | 0.74 | 0.72 | ~2000 | N/A | N/A | N/A | N/A |
-| **YOLOe** | ZSOD | 0.46 | 0.61 | 0.52 | 0.53 | ~20 | N/A | N/A | N/A | N/A |
-| **YOLOe base** | Pre fine-tuning | N/A | N/A | N/A | N/A | ~20 | 0.547 | 0.458 | 0.294 | 0.433 |
-| **YOLOe specialized** | Post fine-tuning | N/A | N/A | N/A | N/A | ~20 | 0.911 | 0.760 | 0.803 | 0.825 |
-| **SAM 3** | Zero-shot | 0.742 | 0.671 | 0.757 | 0.723 | 6146 | 0.512 | 0.603 | 0.061 | 0.392 |
-| **SAM 3 + LP** | Linear Probe | 0.742 | 0.671 | 0.758 | 0.724 | 5862 | 0.520 | 0.597 | 0.065 | 0.394 |
+| Model | Type/Phase | mIoU | Speed (ms/frame) | AP@0.5 crashed | AP@0.5 person | AP@0.5 car | mAP@0.5 |
+|-------|------------|------|------------------|----------------|---------------|------------|---------|
+| **Moondream 2** | ZSOD | 0.44 | ~1000 | N/A | N/A | N/A | N/A |
+| **OMDET TURBO** | ZSOD | 0.72 | ~2000 | N/A | N/A | N/A | N/A |
+| **YOLOe** | ZSOD | 0.53 | ~20 | N/A | N/A | N/A | N/A |
+| **YOLOe base** | Pre fine-tuning | N/A | ~20 | 0.547 | 0.458 | 0.294 | 0.433 |
+| **YOLOe specialized** | Post fine-tuning | N/A | ~20 | 0.911 | 0.760 | 0.803 | 0.825 |
+| **SAM 3** | Zero-shot | 0.723 | 6146 | 0.319 | 0.691 | 0.360 | 0.457 |
+| **SAM 3 + LP** | Linear Probe | 0.724 | 6147 | 0.320 | 0.699 | 0.362 | 0.460 |
 
 **Notes**:
-- **Mean IoU**: Per-class (or per-prompt) mean Intersection over Union computed on correctly matched predictions (True Positives with IoU ≥ 0.5) on the test set. Higher values indicate better localization quality.
-- **mIoU**: Arithmetic mean of the three class-specific IoU values. For zero-shot prompt-based models (Moondream 2, OMDET TURBO, YOLOe ZSOD), IoU values are reported per text prompt as in the original thesis. For SAM 3, IoU values are computed per detection class on the YOLO-style dataset.
+- **mIoU**: Mean Intersection over Union computed on correctly matched predictions (True Positives with IoU ≥ 0.5) on the test set, averaged over the three classes. For zero-shot prompt-based models (Moondream 2, OMDET TURBO, YOLOe ZSOD), IoU values are reported per text prompt as in the original thesis. For SAM 3, IoU values are computed per detection class on the YOLO-style dataset.
 - **Speed**: Average inference time per image including I/O, model forward pass, and post-processing. Measured on test set (100 images for SAM 3). For Moondream 2, OMDET TURBO and YOLOe (ZSOD/base/specialized), speed values are approximate and derived from the thesis (≈1s, ≈2s, ≈20ms per frame).
 - **AP@0.5**: Average Precision at IoU threshold 0.5. Standard object detection metric.
 - **mAP@0.5**: Mean Average Precision across all classes.
@@ -219,7 +218,7 @@ Comprehensive comparison of SAM 3 with other zero-shot and supervised models on 
 - **SAM 3** achieves the highest **localization quality** (mIoU = 0.723) among zero-shot models, significantly outperforming Moondream 2 (0.44) and YOLOe ZSOD (0.53), and **being comparable to OMDET TURBO (0.72), with a slightly higher mIoU**.
 - **Fine-tuned YOLOe** achieves the best detection performance (mAP@0.5 = 0.825) but requires domain-specific training.
 - **SAM 3's inference speed** (≈6s/frame) is slower than YOLOe (20ms) but comparable to other vision-language models like Moondream (1s) and OMDET (2s).
-- **Linear probing** provides minimal improvement for SAM 3 (+0.001 mIoU, +0.002 mAP@0.5) while slightly reducing inference time.
+- **Linear probing** provides a small but consistent improvement for SAM 3 (+0.001 mIoU, +0.003 mAP@0.5) with negligible added latency (~1.6 ms/frame).
 
 ---
 
