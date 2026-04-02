@@ -16,7 +16,7 @@ The core research question is whether modern vision-language models like SAM 3 c
 
 **Segmentation Preservation:** Beyond detection metrics, the project preserves SAM 3's native segmentation outputs as binary masks. This dual-output approach maintains the detailed spatial information that could be valuable for downstream analysis tasks such as damage assessment or scene reconstruction.
 
-**Feature Extraction:** The SAM 3 wrapper has been extended to extract semantic features for each detected object. Using ROI pooling on the model's backbone feature maps, a 256-dimensional representation is computed per detection and then conditioned on the text prompt via mean-pooled language embeddings. These semantic features capture both visual characteristics from the backbone and prompt-specific context, providing rich representations for downstream tasks beyond simple bounding boxes and masks.
+**Feature Extraction:** The SAM 3 wrapper has been extended to extract semantic features for each detected object. Using ROI pooling on the model's backbone feature maps, a 256-dimensional query embedding is computed per detection and then conditioned on the text prompt via mean-pooled language embeddings. The embedding is then concatenated with the model's confidence score to produce a 257-dimensional feature vector. These semantic features capture both visual characteristics from the backbone and prompt-specific context, providing rich representations for downstream tasks beyond simple bounding boxes and masks.
 
 **Linear Probing:** To investigate whether SAM 3's performance can be improved with minimal supervision, a lightweight linear classifier is trained on top of the model's outputs. This classifier learns to re-score detections based on semantic features extracted from SAM 3's internal representations: a 257-dimensional vector combining the 256-dimensional query embeddings from backbone feature maps (conditioned on the text prompt) with the model's confidence score. The linear probe provides a low-cost adaptation method that does not require retraining the foundation model itself.
 
@@ -81,14 +81,22 @@ To run SAM 3 inference on a dataset split, execute the `run_sam3_on_split.py` sc
 python scripts/run_sam3_on_split.py
 ```
 
-Configuration parameters such as confidence threshold, NMS IoU threshold, and whether to save segmentations can be adjusted by editing variables at the top of the script.
+Configuration parameters such as the export confidence threshold, NMS IoU threshold, and whether to save segmentations can be passed as command-line arguments:
+
+```bash
+# Run on train split with a custom export threshold
+python scripts/run_sam3_on_split.py --split train --export_threshold 0.05
+
+# Save segmentation masks
+python scripts/run_sam3_on_split.py --split test --save_segmentations
+```
 
 ### Evaluation
 
 The evaluation script computes standard object detection metrics by comparing predictions against ground-truth annotations. Metrics include per-class and overall Precision, Recall, F1 score, AP@0.50, and AP@0.50:0.95. Results are printed to the console and can be redirected to a file for record-keeping.
 
 ```bash
-python scripts/eval_sam3_on_split.py > results/sam3_test_metrics.txt
+python scripts/eval_sam3_on_split.py --split test --eval_threshold 0.35 > results/sam3_test_metrics.txt
 ```
 
 ### Linear Probing
@@ -172,7 +180,7 @@ Both metrics are measured on the **test set** and saved to the metrics files alo
 
 Results on the test set. Two evaluation paradigms are used:
 
-- **Best-F1**: Each model is evaluated at its own confidence threshold, selected on the validation set to maximise micro-F1 (SAM 3 baseline: thr = 0.70 · SAM 3 + LP: thr = 0.35).
+- **Best-F1**: Each model is evaluated at its own confidence threshold, selected on the validation set to maximise micro-F1 (SAM 3 baseline: thr = 0.70, SAM 3 + LP: thr = 0.35).
 - **Fair comparison**: Both models are evaluated at the same threshold (thr = 0.35).
 
 ### Best-F1 Global Comparison
@@ -242,7 +250,7 @@ Comprehensive comparison of SAM 3 with other zero-shot and supervised models on 
 | **YOLOe** | ZSOD | 0.53 | ~20 | N/A | N/A | N/A | N/A |
 | **YOLOe base** | Pre fine-tuning | N/A | ~20 | 0.547 | 0.458 | 0.294 | 0.433 |
 | **YOLOe specialized** | Post fine-tuning | N/A | ~20 | 0.911 | 0.760 | 0.803 | 0.825 |
-| **SAM 3** | Zero-shot | N/A | 6146 | 0.319 | 0.691 | 0.360 | 0.444 |
+| **SAM 3** | Zero-shot | N/A | 6146 | 0.319 | 0.691 | 0.360 | 0.457 |
 | **SAM 3 + LP** | Linear Probe | 0.609 | 6147 | 0.418 | 0.892 | 0.372 | 0.561 |
 
 **Notes**:

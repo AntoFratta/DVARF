@@ -210,4 +210,7 @@ __marimo__/
 *.pt
 *.pth
 *.ckpt
-data/processed/
+
+# data/processed: exclude heavy intermediate files, keep predictions and weights
+data/processed/features/          # per-image 257-d embeddings (~large)
+data/processed/linear_probe/sam3_linear_probe_train.npz   # training dataset (~medium)

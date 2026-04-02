@@ -1,33 +1,33 @@
 from pathlib import Path
 
-# Root del progetto (dove ci sono README.md, data/, src/, ecc.)
+# Project root directory (contains README.md, data/, src/, etc.)
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
-# Cartelle dati
+# Data directories
 DATA_DIR = PROJECT_ROOT / "data"
 RAW_DATA_DIR = DATA_DIR / "raw"
 
-# Percorsi specifici del dataset
+# Dataset-specific paths
 DATASET_YAML_PATH = RAW_DATA_DIR / "data.yaml"
 IMAGES_ROOT = RAW_DATA_DIR / "images"
 LABELS_ROOT = RAW_DATA_DIR / "labels"
 
 
 def _check_split(split: str) -> str:
-    """Verifica che lo split sia valido."""
+    """Validate that the split name is one of the expected values."""
     if split not in ("train", "val", "test"):
-        raise ValueError(f"Split non valido: {split!r} (usa 'train', 'val' o 'test')")
+        raise ValueError(f"Invalid split: {split!r} (expected 'train', 'val', or 'test')")
     return split
 
 
 def get_images_dir(split: str):
-    """Ritorna la cartella immagini per lo split dato."""
+    """Return the images directory for the given split."""
     split = _check_split(split)
     return IMAGES_ROOT / split
 
 
 def get_labels_dir(split: str):
-    """Ritorna la cartella labels per lo split dato."""
+    """Return the labels directory for the given split."""
     split = _check_split(split)
     return LABELS_ROOT / split
 

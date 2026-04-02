@@ -1,3 +1,11 @@
+"""
+Visualization script: overlay ground-truth and SAM 3 predicted bounding boxes
+side-by-side on a single image to allow qualitative inspection of detections.
+
+Ground-truth boxes are drawn in green; predicted boxes in red.
+Edit the `split` and `image_id` variables inside `main()` to inspect different images.
+"""
+
 import sys
 from pathlib import Path
 from typing import List, Tuple

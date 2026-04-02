@@ -1,3 +1,12 @@
+"""
+Visualization script: display SAM 3 binary segmentation masks overlaid on
+the original image using class-specific color maps.
+
+Redish tones = crashed car (class 0), Blue tones = person (class 1),
+Green tones = undamaged car (class 2).
+Edit the `split` and `image_id` variables inside `main()` to inspect different images.
+"""
+
 from __future__ import annotations
 
 import sys
